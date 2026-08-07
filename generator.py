@@ -1,4 +1,6 @@
+import re
 import os
+import sys
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
@@ -12,14 +14,23 @@ TEMPLATE_NAME = "report.html"
 
 PAGE_SIZE = 4  # records per page
 
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        # running as a PyInstaller bundle
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
+
+TEMPLATE_DIR = os.path.join(get_base_path(), "templates")
 
 def read_table(file_path: str) -> pd.DataFrame:
     """Read a CSV or Excel file into a DataFrame."""
     ext = os.path.splitext(file_path)[1].lower()
     if ext in (".csv", ".txt"):
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, sep=None, engine="python",  encoding="utf-8-sig")
+        print(df.columns.tolist())
     elif ext in (".xlsx", ".xls"):
         df = pd.read_excel(file_path)
+        print(df.columns.tolist())
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
@@ -38,11 +49,43 @@ def fmt(value) -> str:
     except (ValueError, TypeError):
         return str(value)
 
+def parse_currency_value(value) -> float:
+    """Normalize a currency-formatted value (string or number) into a float.
+    Handles both Indonesian format (1.000,00) and English format (1,000.00)."""
+    if pd.isna(value):
+        return 0.0
+
+    # if it's already numeric (pandas parsed it fine), just use it directly
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    value = str(value).strip()
+    value = re.sub(r'[^\d.,]', '', value)  # strip currency symbols, spaces, etc.
+
+    if not value:
+        return 0.0
+
+    if re.search(r'\.\d{3},', value):
+        # Indonesian format: 1.000,00
+        value = value.replace('.', '')
+        value = value.replace(',', '.')
+    else:
+        # English format: 1,000.00
+        value = value.replace(',', '')
+
+    try:
+        return float(value)
+    except ValueError:
+        return 0.0
+
 
 def normalize_record(row: pd.Series) -> dict:
     """Turn a raw row into a dict with every expected field present,
     and compute the total from the raw numeric values."""
-    raw = {field: row[field] if field in row and pd.notna(row[field]) else 0 for field in FIELDS}
+    raw = {
+        field: parse_currency_value(row[field]) if field in row else 0.0
+        for field in FIELDS
+    }
 
     total = raw["gaji_bruto"] - raw["bpjs_tk"] - raw["pph_21"] - raw["uang_makan"] - raw["seragam"]
 
@@ -67,7 +110,6 @@ def render_html(pages: list) -> str:
     template = env.get_template(TEMPLATE_NAME)
 
     now = datetime.now()
-    print(now)
     month = BULAN[now.month - 1]
     year = now.year
 
@@ -83,7 +125,7 @@ def generate_pdf(input_path: str, output_path: str) -> str:
     missing = required_cols - set(df.columns)
     if missing:
         raise ValueError(
-            f"Missing expected column(s): {', '.join(sorted(missing))}. "
+            f"Missing expected column(s): {', '.join(missing)}. "
             f"Found columns: {', '.join(df.columns)}"
         )
 
