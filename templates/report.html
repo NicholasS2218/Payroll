@@ -80,7 +80,7 @@
     }
 
     .card .total-row td {
-        border-top: 1px solid #333;
+        border-top: 1px solid #ccc;
         padding-top: 2mm;
         font-weight: bold;
     }
@@ -95,12 +95,12 @@
         <h4>GAJI BULAN {{ month }} {{ year }}</h4>
         <table>
             <tr><td class="label">NAMA</td><td class="value">{{ record.name }}</td></tr>
-            <tr><td class="label">GAJI BRUTO</td><td class="value">Rp. {{ record.gaji_bruto }}</td></tr>
-            <tr><td class="label">BPJS TK</td><td class="value">Rp. {{ record.bpjs_tk }}</td></tr>
-            <tr><td class="label">PPH 21</td><td class="value">Rp. {{ record.pph_21 }}</td></tr>
-            <tr><td class="label">UANG MAKAN</td><td class="value">Rp. {{ record.uang_makan }}</td></tr>
-            <tr><td class="label">SERAGAM</td><td class="value">Rp. {{ record.seragam }}</td></tr>
-            <tr class="total-row"><td class="label">GAJI YANG DITRANSFER</td><td class="value">Rp. {{ record.total }}</td></tr>
+            {% for row in record.rows %}
+            <tr {% if row.key in ['total', 'gaji_bruto'] %}class="total-row"{% endif %}>
+                <td class="label">{{ row.label }}</td>
+                <td class="value">{% if row.negative %}- {% endif %}Rp. {{ row.value }}</td>
+            </tr>
+            {% endfor %}
         </table>
     </div>
     {% endfor %}

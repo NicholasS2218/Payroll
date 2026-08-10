@@ -70,7 +70,6 @@ payroll-report-generator/
 ```
 
 ## Notes
-- Input files must follow these columns: `name`, `gaji bruto`, `bpjs tk`, `pph 21`, `uang makan`, `seragam` (case-insensitive, spaces are normalized to underscores).
+- Please check the input files & make sure REDUCTION is updated based on your file
 - Currency values with `,`/`.` formatting (e.g. `1.000,00` or `1,000.00`) are auto-normalized.
 - CSV delimiter (`,` or `;`) is auto-detected.
-- Change it in the FIELDS in generator.py

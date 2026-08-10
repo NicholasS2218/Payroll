@@ -7,37 +7,36 @@ from weasyprint import HTML
 from datetime import datetime
 
 BULAN = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
-FIELDS = ["gaji_bruto", "bpjs_tk", "pph_21", "uang_makan", "seragam"]
 
-TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 TEMPLATE_NAME = "report.html"
-
 PAGE_SIZE = 4  # records per page
 
 def get_base_path():
     if getattr(sys, 'frozen', False):
-        # running as a PyInstaller bundle
         return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
 
 TEMPLATE_DIR = os.path.join(get_base_path(), "templates")
 
-def read_table(file_path: str) -> pd.DataFrame:
-    """Read a CSV or Excel file into a DataFrame."""
+
+def read_table(file_path: str):
+    """Read a CSV or Excel file into a DataFrame, and derive the list of
+    value fields (every column except 'name') from the file itself."""
     ext = os.path.splitext(file_path)[1].lower()
     if ext in (".csv", ".txt"):
-        df = pd.read_csv(file_path, sep=None, engine="python",  encoding="utf-8-sig")
-        print(df.columns.tolist())
+        df = pd.read_csv(file_path, sep=None, engine="python", encoding="utf-8-sig")
     elif ext in (".xlsx", ".xls"):
         df = pd.read_excel(file_path)
-        print(df.columns.tolist())
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
     # normalize column headers: lowercase + spaces -> underscores
     df.columns = [col.strip().lower().replace(" ", "_") for col in df.columns]
 
-    return df
+    # everything except 'name' is a value field, in file order
+    fields = [col for col in df.columns if col != "name"]
+
+    return df, fields
 
 
 def fmt(value) -> str:
@@ -45,32 +44,28 @@ def fmt(value) -> str:
     if pd.isna(value) or value == 0:
         return "-"
     try:
-        return f"{value:,.0f}"
+        s = f"{value:,.0f}"
+        return s.replace(",", "X").replace(".", ",").replace("X", ".")
     except (ValueError, TypeError):
         return str(value)
+
 
 def parse_currency_value(value) -> float:
     """Normalize a currency-formatted value (string or number) into a float.
     Handles both Indonesian format (1.000,00) and English format (1,000.00)."""
     if pd.isna(value):
         return 0.0
-
-    # if it's already numeric (pandas parsed it fine), just use it directly
     if isinstance(value, (int, float)):
         return float(value)
 
     value = str(value).strip()
-    value = re.sub(r'[^\d.,]', '', value)  # strip currency symbols, spaces, etc.
-
+    value = re.sub(r'[^\d.,]', '', value)
     if not value:
         return 0.0
 
     if re.search(r'\.\d{3},', value):
-        # Indonesian format: 1.000,00
-        value = value.replace('.', '')
-        value = value.replace(',', '.')
+        value = value.replace('.', '').replace(',', '.')
     else:
-        # English format: 1,000.00
         value = value.replace(',', '')
 
     try:
@@ -78,28 +73,39 @@ def parse_currency_value(value) -> float:
     except ValueError:
         return 0.0
 
+LABEL_OVERRIDES = {
+    "total": "GAJI YANG DITRANSFER",
+}
 
-def normalize_record(row: pd.Series) -> dict:
-    """Turn a raw row into a dict with every expected field present,
-    and compute the total from the raw numeric values."""
-    raw = {
-        field: parse_currency_value(row[field]) if field in row else 0.0
-        for field in FIELDS
-    }
+def field_label(field: str) -> str:
+    """Derive a display label from a field key, e.g. 'gaji_bruto' -> 'GAJI BRUTO'."""
+    if field in LABEL_OVERRIDES:
+        return LABEL_OVERRIDES[field]
+    return field.replace("_", " ").upper()
 
-    total = raw["gaji_bruto"] - raw["bpjs_tk"] - raw["pph_21"] - raw["uang_makan"] - raw["seragam"]
+DEDUCTION = {"bpjs_tk", "pph_21", "uang_makan", "seragam"} #HARDCODE, UPDATE THIS LATER
 
-    record = {"name": row.get("name", "Unknown")}
-    for field in FIELDS:
-        record[field] = fmt(raw[field])
-    record["total"] = fmt(total)
+def normalize_record(row: pd.Series, fields: list) -> dict:
+    """Turn a raw row into a dict with every expected field present."""
+    record = {"name": row.get("name", "Unknown"), "rows": []}
+
+    for field in fields:
+        raw_value = parse_currency_value(row[field]) if field in row else 0.0
+        if raw_value > 0:
+            record["rows"].append({
+                "key": field,
+                "label": field_label(field),
+                "value": fmt(raw_value),
+                "negative": field in DEDUCTION
+            })
+        # record[field] = fmt(raw_value)
 
     return record
 
 
-def build_pages(df: pd.DataFrame) -> list:
+def build_pages(df: pd.DataFrame, fields: list) -> list:
     """Group normalized records into chunks of PAGE_SIZE for pagination."""
-    records = [normalize_record(row) for _, row in df.iterrows()]
+    records = [normalize_record(row, fields) for _, row in df.iterrows()]
     pages = [records[i:i + PAGE_SIZE] for i in range(0, len(records), PAGE_SIZE)]
     return pages
 
@@ -113,30 +119,25 @@ def render_html(pages: list) -> str:
     month = BULAN[now.month - 1]
     year = now.year
 
-    return template.render(pages = pages, month = month, year = year)
+    # field_defs = [{"key": f, "label": field_label(f)} for f in fields]
+
+    return template.render(pages=pages, month=month, year=year)
 
 
 def generate_pdf(input_path: str, output_path: str) -> str:
-    """Full pipeline: read file -> normalize -> render -> save PDF.
-    Returns the output_path on success."""
-    df = read_table(input_path)
+    """Full pipeline: read file -> normalize -> render -> save PDF."""
+    df, fields = read_table(input_path)
 
-    required_cols = {"name"} | set(FIELDS)
-    missing = required_cols - set(df.columns)
-    if missing:
-        raise ValueError(
-            f"Missing expected column(s): {', '.join(missing)}. "
-            f"Found columns: {', '.join(df.columns)}"
-        )
+    if "name" not in df.columns:
+        raise ValueError(f"Missing required column: 'name'. Found columns: {', '.join(df.columns)}")
 
-    pages = build_pages(df)
+    pages = build_pages(df, fields)
     html_string = render_html(pages)
     HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
     return output_path
 
 
 if __name__ == "__main__":
-    # Quick manual test with a sample CSV, if present.
     sample = os.path.join(os.path.dirname(__file__), "sample_data.csv")
     if os.path.exists(sample):
         out = generate_pdf(sample, "test_report.pdf")
