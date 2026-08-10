@@ -102,6 +102,25 @@ def normalize_record(row: pd.Series, fields: list) -> dict:
 
     return record
 
+def preview_data(input_path: str):
+    """Read a file and return (columns, rows, fields) for a UI preview table,
+    without generating the PDF."""
+    df, fields = read_table(input_path)
+
+    if "name" not in df.columns:
+        raise ValueError(f"Missing required column: 'name'. Found columns: {', '.join(df.columns)}")
+
+    columns = ["Name"] + [field_label(f) for f in fields]
+
+    rows = []
+    for _, row in df.iterrows():
+        r = [row.get("name", "Unknown")]
+        for field in fields:
+            raw_value = parse_currency_value(row[field]) if field in row else 0.0
+            r.append(fmt(raw_value))
+        rows.append(r)
+
+    return columns, rows, fields
 
 def build_pages(df: pd.DataFrame, fields: list) -> list:
     """Group normalized records into chunks of PAGE_SIZE for pagination."""
