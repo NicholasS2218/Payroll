@@ -2,6 +2,7 @@ import os
 import sys
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 import customtkinter as ctk
 from tkinter import filedialog, messagebox, ttk
 
@@ -23,28 +24,36 @@ class ReportApp:
         # self.root.resizable(False, False)
 
         self.input_path = None # tk.StringVar(value="No file selected")
+        self.all_columns = []
+        self.all_rows = []
 
         self._build_ui()
 
     def _build_ui(self):
+        # scrollable container - everything below lives inside this instead of self.root
+        self.scroll_frame = ctk.CTkScrollableFrame(self.root, fg_color="transparent")
+        self.scroll_frame.pack(fill="both", expand=True)
+ 
+        container = self.scroll_frame
+
         # header
-        header = ctk.CTkFrame(self.root, fg_color="transparent")
+        header = ctk.CTkFrame(container, fg_color="transparent")
         header.pack(fill="x", padx=24, pady=(24, 8))
         # pad = {"padx": 20, "pady": 10}
 
-        title = ctk.CTkLabel(header, text="Payroll Report Generator", font=ctk.CTkFont(size=20, weight="bold"))
+        title = ctk.CTkLabel(header, text="Payroll Report Generator", font=ctk.CTkFont(size=32, weight="bold"))
         title.pack()
         #title.pack(pady=(20, 5))
 
         subtitle = ctk.CTkLabel(
             header,
             text="Select a CSV or Excel file",
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=16),
             text_color="#666666",
         )
         subtitle.pack()
 
-        file_row = ctk.CTkFrame(self.root, fg_color="transparent")
+        file_row = ctk.CTkFrame(container, fg_color="transparent")
         file_row.pack(fill="x", padx=24, pady=(8, 4))
 
         self.select_btn = ctk.CTkButton(
@@ -53,20 +62,37 @@ class ReportApp:
         )
         self.select_btn.pack(side="left")
 
-        self.file_label = ctk.CTkLabel(file_row, text="No file selected", font=ctk.CTkFont(size=9), text_color="#555555")
+        self.file_label = ctk.CTkLabel(file_row, text="No file selected", font=ctk.CTkFont(size=14), text_color="#555555")
         self.file_label.pack(side="left", padx=(12,0))
 
+        # search bar
+        search_row = ctk.CTkFrame(container, fg_color="transparent")
+        search_row.pack(fill="x", padx=24, pady=(4, 0))
+
+        search_subtitle = ctk.CTkLabel(
+            search_row, text="Search Employee", font=ctk.CTkFont(size=12), text_color="#555555", anchor="w"
+        )
+        search_subtitle.pack(fill="x", pady=(2, 0))
+
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", self._on_search_changed)
+
+        self.search_entry = ctk.CTkEntry(
+            search_row, placeholder_text="Search by name...", textvariable=self.search_var,
+        )
+        self.search_entry.pack(fill="x")
+
         # preview table
-        table_frame = ctk.CTkFrame(self.root)
+        table_frame = ctk.CTkFrame(container)
         table_frame.pack(fill="both", expand=True, padx=24, pady=(12, 8))
 
         self._build_table(table_frame)
 
         # status + generate
-        footer = ctk.CTkFrame(self.root, fg_color="transparent")
+        footer = ctk.CTkFrame(container, fg_color="transparent")
         footer.pack(fill="x", padx=24, pady=(4, 24))
 
-        self.status_label = ctk.CTkLabel(footer, text="", font=ctk.CTkFont(size=12), text_color="#007700")
+        self.status_label = ctk.CTkLabel(footer, text="", font=ctk.CTkFont(size=14), text_color="#007700")
         self.status_label.pack(side="left")
 
         self.generate_btn = ctk.CTkButton(
@@ -126,6 +152,12 @@ class ReportApp:
 
         self.input_path = path
         self.file_label.configure(text=os.path.basename(path))
+
+        self.all_columns = columns
+        self.all_rows = rows
+
+        self.search_var.set("") 
+
         self._populate_table(columns, rows)
         self.generate_btn.configure(state="normal")
         self.status_label.configure(text=f"{len(rows)} record(s) loaded.", text_color="#007700")
@@ -135,17 +167,36 @@ class ReportApp:
         #     self.generate_btn.config(state=tk.NORMAL)
         #     self.status_label.config(text="")
 
+    def _on_search_changed(self, *args):
+        if not self.all_rows:
+            return
+
+        query = self.search_var.get().strip().lower()
+        if not query:
+            filtered = self.all_rows
+        else:
+            # column 0 is always "Name"
+            filtered = [row for row in self.all_rows if query in str(row[0]).lower()]
+
+        self._populate_table(self.all_columns, filtered)
+        self.status_label.configure(text=f"{len(filtered)} of {len(self.all_rows)} record(s) shown.", text_color="#555555")
+
     def _populate_table(self, columns, rows):
         self.tree.delete(*self.tree.get_children())
-
         self.tree["columns"] = columns
-        for col in columns:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, anchor="center", width=110, stretch=True)
 
-        # widen the name column a bit
-        if columns:
-            self.tree.column(columns[0], width=160, anchor="w")
+        font = tkfont.Font(font=("Arial", 10))
+        header_font = tkfont.Font(font=("Arial", 10, "bold"))
+
+        for i, col in enumerate(columns):
+            self.tree.heading(col, text=col)
+            # width = longest of header or any value in that column, plus padding
+            content_width = max(
+                [header_font.measure(col)] + [font.measure(str(row[i])) for row in rows],
+                default=80,
+            )
+            anchor = "w" if i == 0 else "center"
+            self.tree.column(col, anchor=anchor, width=content_width + 24, minwidth=60, stretch=True)
 
         for row in rows:
             self.tree.insert("", "end", values=row)
