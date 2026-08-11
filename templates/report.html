@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <style>
     @page {
-        size: A4;
+        size: A4 landscape;
         margin: 5mm;
     }
 
@@ -15,13 +15,13 @@
 
     .page {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr 1fr 1fr;
         grid-template-rows: 1fr 1fr;
         /* grid-auto-rows: min-content; */
         /* align-items: start;   */
         /* gap: 8mm; */
         width: 100%;
-        height: 280mm; /* set it lower if overflow */
+        height: 190mm; /* set it lower if overflow */
         page-break-after: always;
         page-break-inside: avoid;
         overflow: hidden;
@@ -32,7 +32,7 @@
     }
 
     .card {
-        border-right: 1px dashed #333;
+        /* border-right: 1px dashed #333; */
         border-radius: 4px;
         padding: 5mm;
         display: flex;
@@ -46,7 +46,7 @@
 
     /* bottom row cards: remove bottom border (outer edge) */
     .card:nth-child(n+3) {
-        border-top: 1px dashed #333;
+        /* border-top: 1px dashed #333; */
     }
 
     .card.empty {
@@ -62,21 +62,30 @@
 
     .card table {
         width: 100%;
+        table-layout: fixed;
         border-collapse: collapse;
         font-size: 10pt;
     }
 
     .card table td {
-        padding: 1.5mm 0;
+        padding: 1.2mm 0;
     }
 
     .card table td.label {
+        width: 55%;
         color: #555;
     }
 
     .card table td.value {
+        width: 45%;
         text-align: right;
         font-variant-numeric: tabular-nums;
+    }
+
+    .card table td.name-value {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .card .total-row td {
@@ -94,7 +103,7 @@
     <div class="card">
         <h4>GAJI BULAN {{ month }} {{ year }}</h4>
         <table>
-            <tr><td class="label">NAMA</td><td class="value">{{ record.name }}</td></tr>
+            <tr><td class="label">NAMA</td><td class="value name-value">{{ record.name }}</td></tr>
             {% for row in record.rows %}
             <tr {% if row.key in ['total', 'gaji_bruto'] %}class="total-row"{% endif %}>
                 <td class="label">{{ row.label }}</td>
@@ -105,7 +114,7 @@
     </div>
     {% endfor %}
 
-    {% for _ in range(4 - page|length) %}
+    {% for _ in range(6 - page|length) %}
     <div class="card empty"></div>
     {% endfor %}
 </div>
