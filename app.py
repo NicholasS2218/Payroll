@@ -6,7 +6,7 @@ import tkinter.font as tkfont
 import customtkinter as ctk
 from tkinter import filedialog, messagebox, ttk
 
-from generator import generate_pdf, preview_data
+from generator import generate_pdf_parallel, generate_pdf, preview_data
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -237,7 +237,11 @@ class ReportApp:
 
     def _run_generation(self, input_path, output_path):
         try:
-            generate_pdf(input_path, output_path)
+            def on_progress(percent):
+                self.root.after(0, lambda: self.status_label.configure(
+                    text=f"Progress ... {percent}%", text_color="#555555"
+                ))
+            generate_pdf_parallel(input_path, output_path, progress_callback=on_progress)
             self.root.after(0, self._on_success, output_path)
         except Exception as e:
             self.root.after(0, self._on_error, str(e))
@@ -265,6 +269,9 @@ class ReportApp:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     root = ctk.CTk()
     app = ReportApp(root)
     root.mainloop()

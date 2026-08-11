@@ -1,15 +1,27 @@
 import re
 import os
+import math
 import sys
 import pandas as pd
+import tempfile 
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from pypdf import PdfWriter
+
+def _render_chunk(pages_chunk, month, year, template_dir, template_name, out_path):
+    """Runs in a separate process: render a subset of pages into its own standalone PDF."""
+    env = Environment(loader=FileSystemLoader(template_dir))
+    template = env.get_template(template_name)
+    html_string = template.render(pages=pages_chunk, month=month, year=year)
+    HTML(string=html_string, base_url=template_dir).write_pdf(out_path)
+    return out_path
 
 BULAN = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
 
 TEMPLATE_NAME = "report.html"
-PAGE_SIZE = 4  # records per page
+PAGE_SIZE = 6  # records per page
 
 def get_base_path():
     if getattr(sys, 'frozen', False):
@@ -83,6 +95,13 @@ def field_label(field: str) -> str:
         return LABEL_OVERRIDES[field]
     return field.replace("_", " ").upper()
 
+# def truncate_name(name: str, max_len: int = 17) -> str:
+#     """Truncate a name to max_len characters (including spaces), adding '...' if cut."""
+#     name = str(name)
+#     if len(name) <= max_len:
+#         return name
+#     return name[:max_len - 3].rstrip() + "..."
+
 DEDUCTION = {"bpjs_tk", "pph_21", "uang_makan", "seragam"} #HARDCODE, UPDATE THIS LATER
 
 def normalize_record(row: pd.Series, fields: list) -> dict:
@@ -155,11 +174,67 @@ def generate_pdf(input_path: str, output_path: str) -> str:
     HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
     return output_path
 
+def generate_pdf_parallel(input_path: str, output_path: str, workers = None,  progress_callback = None) -> str:
+    """Same pipeline as generate_pdf, but renders page-chunks in parallel processes
+    and merges the resulting PDFs. Falls back to single-process for small jobs."""
+    df, fields = read_table(input_path)
+
+    if "name" not in df.columns:
+        raise ValueError(f"Missing required column: 'name'. Found columns: {', '.join(df.columns)}")
+
+    pages = build_pages(df, fields)
+    if not pages:
+        raise ValueError("No records found to generate.")
+
+    workers = workers or min(os.cpu_count() or 1, len(pages))
+
+    # not worth the process-spawn overhead for a handful of pages
+    if workers <= 1 or len(pages) < workers * 2:
+        html_string = render_html(pages)
+        HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
+        return output_path
+
+    now = datetime.now()
+    month = BULAN[now.month - 1]
+    year = now.year
+
+    target_chunks = min(len(pages), workers * 4)
+    chunk_size = max(1, math.ceil(len(pages) / target_chunks))
+    # chunk_size = math.ceil(len(pages) / workers)
+    chunks = [pages[i:i + chunk_size] for i in range(0, len(pages), chunk_size)]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        chunk_paths = [os.path.join(tmpdir, f"chunk_{i}.pdf") for i in range(len(chunks))]
+
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            to_index = {
+                executor.submit(_render_chunk, chunk, month, year, TEMPLATE_DIR, TEMPLATE_NAME, path): i
+                for i, (chunk, path) in enumerate(zip(chunks, chunk_paths))
+            }
+            done_count = 0
+            total = len(to_index)
+            for t in as_completed(to_index):
+                t.result()  # raises here if that chunk's render failed
+                done_count += 1
+                if progress_callback:
+                    percent = int((done_count / total) * 100)
+                    progress_callback(percent)
+                    # progress_callback(done_count, len(chunks))
+
+        merger = PdfWriter()
+        for path in chunk_paths:
+            merger.append(path)
+        merger.write(output_path)
+        merger.close()
+
+    return output_path
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     sample = os.path.join(os.path.dirname(__file__), "sample_data.csv")
     if os.path.exists(sample):
-        out = generate_pdf(sample, "test_report.pdf")
+        out = generate_pdf_parallel(sample, "test_report.pdf")
         print(f"Generated: {out}")
     else:
         print("No sample_data.csv found for manual testing.")
