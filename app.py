@@ -31,14 +31,20 @@ class ReportApp:
 
     def _build_ui(self):
         # scrollable container - everything below lives inside this instead of self.root
-        self.scroll_frame = ctk.CTkScrollableFrame(self.root, fg_color="transparent")
-        self.scroll_frame.pack(fill="both", expand=True)
+        # self.scroll_frame = ctk.CTkScrollableFrame(self.root, fg_color="transparent")
+        # self.scroll_frame.pack(fill="both", expand=True)
  
-        container = self.scroll_frame
+        # container = self.scroll_frame
+
+        # uncomment the above if u want scroll
+        container = self.root
+        container.grid_rowconfigure(3, weight=1)  # table row expands to fill remaining space
+        container.grid_columnconfigure(0, weight=1)
 
         # header
         header = ctk.CTkFrame(container, fg_color="transparent")
-        header.pack(fill="x", padx=24, pady=(24, 8))
+        header.grid(row=0, column=0, sticky="ew", padx=24, pady=(24, 8))
+        # header.pack(fill="x", padx=24, pady=(24, 8))
         # pad = {"padx": 20, "pady": 10}
 
         title = ctk.CTkLabel(header, text="Payroll Report Generator", font=ctk.CTkFont(size=32, weight="bold"))
@@ -54,7 +60,8 @@ class ReportApp:
         subtitle.pack()
 
         file_row = ctk.CTkFrame(container, fg_color="transparent")
-        file_row.pack(fill="x", padx=24, pady=(8, 4))
+        file_row.grid(row=1, column=0, sticky="ew", padx=24, pady=(8, 4))
+        # file_row.pack(fill="x", padx=24, pady=(8, 4))
 
         self.select_btn = ctk.CTkButton(
             file_row, text="Select File", width=120, command=self.select_file, 
@@ -67,7 +74,8 @@ class ReportApp:
 
         # search bar
         search_row = ctk.CTkFrame(container, fg_color="transparent")
-        search_row.pack(fill="x", padx=24, pady=(4, 0))
+        search_row.grid(row=2, column=0, sticky="ew", padx=24, pady=(4, 0))
+        # search_row.pack(fill="x", padx=24, pady=(4, 0))
 
         search_subtitle = ctk.CTkLabel(
             search_row, text="Search Employee", font=ctk.CTkFont(size=12), text_color="#555555", anchor="w"
@@ -84,13 +92,15 @@ class ReportApp:
 
         # preview table
         table_frame = ctk.CTkFrame(container)
-        table_frame.pack(fill="both", expand=True, padx=24, pady=(12, 8))
+        table_frame.grid(row=3, column=0, sticky="nsew", padx=24, pady=(12, 8))
+        # table_frame.pack(fill="both", expand=True, padx=24, pady=(12, 8))
 
         self._build_table(table_frame)
 
         # status + generate
         footer = ctk.CTkFrame(container, fg_color="transparent")
-        footer.pack(fill="x", padx=24, pady=(4, 24))
+        footer.grid(row=4, column=0, sticky="ew", padx=24, pady=(4, 24))
+        # footer.pack(fill="x", padx=24, pady=(4, 24))
 
         self.status_label = ctk.CTkLabel(footer, text="", font=ctk.CTkFont(size=14), text_color="#007700")
         self.status_label.pack(side="left")
