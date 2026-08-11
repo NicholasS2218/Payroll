@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    @page {
+        size: A4;
+        margin: 5mm;
+    }
+
+    * {
+        box-sizing: border-box;
+        font-family: Arial, sans-serif;
+    }
+
+    .page {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr 1fr;
+        /* grid-auto-rows: min-content; */
+        /* align-items: start;   */
+        /* gap: 8mm; */
+        width: 100%;
+        height: 280mm; /* set it lower if overflow */
+        page-break-after: always;
+        page-break-inside: avoid;
+        overflow: hidden;
+    }
+
+    .page:last-child {
+        page-break-after: auto;
+    }
+
+    .card {
+        border-right: 1px dashed #333;
+        border-radius: 4px;
+        padding: 5mm;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* top-right card: remove right border (it's the outer edge) */
+    .card:nth-child(2n) {
+        border-right: none;
+    }
+
+    /* bottom row cards: remove bottom border (outer edge) */
+    .card:nth-child(n+3) {
+        border-top: 1px dashed #333;
+    }
+
+    .card.empty {
+        border: 0px dashed #ccc;
+    }
+
+    .card h4 {
+        margin: 0 0 4mm 0;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 2mm;
+        text-align: center;
+    }
+
+    .card table {
+        width: 100%;
+        table-layout: fixed;
+        border-collapse: collapse;
+        font-size: 10pt;
+    }
+
+    .card table td {
+        padding: 1.5mm 0;
+    }
+
+    .card table td.label {
+        width: 50%;
+        color: #555;
+    }
+
+    .card table td.value {
+        width: 50%;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .card table td.name-value {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .card .total-row td {
+        border-top: 1px solid #ccc;
+        padding-top: 2mm;
+        font-weight: bold;
+    }
+</style>
+</head>
+<body>
+
+{% for page in pages %}
+<div class="page">
+    {% for record in page %}
+    <div class="card">
+        <h4>GAJI BULAN {{ month }} {{ year }}</h4>
+        <table>
+            <tr><td class="label">NAMA</td><td class="value name-value">{{ record.name }}</td></tr>
+            {% for row in record.rows %}
+            <tr {% if row.key in ['total', 'gaji_bruto'] %}class="total-row"{% endif %}>
+                <td class="label">{{ row.label }}</td>
+                <td class="value">{% if row.negative %}- {% endif %}Rp. {{ row.value }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+    {% endfor %}
+
+    {% for _ in range(4 - page|length) %}
+    <div class="card empty"></div>
+    {% endfor %}
+</div>
+{% endfor %}
+
+</body>
+</html>

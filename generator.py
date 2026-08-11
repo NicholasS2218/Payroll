@@ -20,8 +20,14 @@ def _render_chunk(pages_chunk, month, year, template_dir, template_name, out_pat
 
 BULAN = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
 
-TEMPLATE_NAME = "report.html"
-PAGE_SIZE = 6  # records per page
+# TEMPLATE_NAME = "report_3x2.html"
+# PAGE_SIZE = 6  # records per page
+
+LAYOUTS = {
+    "PORTRAIT": {"template": "report_2x2.html", "page_size": 4},
+    "LANDSCAPE": {"template": "report_3x2.html", "page_size": 6},
+}
+DEFAULT_LAYOUT = "LANDSCAPE"
 
 def get_base_path():
     if getattr(sys, 'frozen', False):
@@ -95,13 +101,6 @@ def field_label(field: str) -> str:
         return LABEL_OVERRIDES[field]
     return field.replace("_", " ").upper()
 
-# def truncate_name(name: str, max_len: int = 17) -> str:
-#     """Truncate a name to max_len characters (including spaces), adding '...' if cut."""
-#     name = str(name)
-#     if len(name) <= max_len:
-#         return name
-#     return name[:max_len - 3].rstrip() + "..."
-
 DEDUCTION = {"bpjs_tk", "pph_21", "uang_makan", "seragam"} #HARDCODE, UPDATE THIS LATER
 
 def normalize_record(row: pd.Series, fields: list) -> dict:
@@ -141,17 +140,17 @@ def preview_data(input_path: str):
 
     return columns, rows, fields
 
-def build_pages(df: pd.DataFrame, fields: list) -> list:
+def build_pages(df: pd.DataFrame, fields: list, page_size: int) -> list:
     """Group normalized records into chunks of PAGE_SIZE for pagination."""
     records = [normalize_record(row, fields) for _, row in df.iterrows()]
-    pages = [records[i:i + PAGE_SIZE] for i in range(0, len(records), PAGE_SIZE)]
+    pages = [records[i:i + page_size] for i in range(0, len(records), page_size)]
     return pages
 
 
-def render_html(pages: list) -> str:
+def render_html(pages: list, template_name: str) -> str:
     """Render the Jinja2 template with the paginated records."""
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
-    template = env.get_template(TEMPLATE_NAME)
+    template = env.get_template(template_name)
 
     now = datetime.now()
     month = BULAN[now.month - 1]
@@ -161,28 +160,40 @@ def render_html(pages: list) -> str:
 
     return template.render(pages=pages, month=month, year=year)
 
+"""Full pipeline: read file -> normalize -> render -> save PDF."""
+def generate_pdf(input_path: str, output_path: str, layout: str = DEFAULT_LAYOUT) -> str:
+    if layout not in LAYOUTS:
+        raise ValueError(f"Unknown layout: {layout}. Choose from {list(LAYOUTS)}.")
 
-def generate_pdf(input_path: str, output_path: str) -> str:
-    """Full pipeline: read file -> normalize -> render -> save PDF."""
+    config = LAYOUTS[layout]
+    template_name = config["template"]
+    page_size = config["page_size"]
+
     df, fields = read_table(input_path)
 
     if "name" not in df.columns:
         raise ValueError(f"Missing required column: 'name'. Found columns: {', '.join(df.columns)}")
 
-    pages = build_pages(df, fields)
-    html_string = render_html(pages)
+    pages = build_pages(df, fields, page_size)
+    html_string = render_html(pages, template_name)
     HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
     return output_path
 
-def generate_pdf_parallel(input_path: str, output_path: str, workers = None,  progress_callback = None) -> str:
-    """Same pipeline as generate_pdf, but renders page-chunks in parallel processes
-    and merges the resulting PDFs. Falls back to single-process for small jobs."""
+def generate_pdf_parallel(input_path: str, output_path: str, layout: str = DEFAULT_LAYOUT,
+                           workers = None,  progress_callback = None) -> str:
+
+    if layout not in LAYOUTS:
+        raise ValueError(f"Unknown layout: {layout}. Choose from {list(LAYOUTS)}.")
+    config = LAYOUTS[layout]
+    template_name = config["template"]
+    page_size = config["page_size"]
+
     df, fields = read_table(input_path)
 
     if "name" not in df.columns:
         raise ValueError(f"Missing required column: 'name'. Found columns: {', '.join(df.columns)}")
 
-    pages = build_pages(df, fields)
+    pages = build_pages(df, fields, page_size)
     if not pages:
         raise ValueError("No records found to generate.")
 
@@ -190,7 +201,7 @@ def generate_pdf_parallel(input_path: str, output_path: str, workers = None,  pr
 
     # not worth the process-spawn overhead for a handful of pages
     if workers <= 1 or len(pages) < workers * 2:
-        html_string = render_html(pages)
+        html_string = render_html(pages, template_name)
         HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
         return output_path
 
@@ -200,7 +211,6 @@ def generate_pdf_parallel(input_path: str, output_path: str, workers = None,  pr
 
     target_chunks = min(len(pages), workers * 4)
     chunk_size = max(1, math.ceil(len(pages) / target_chunks))
-    # chunk_size = math.ceil(len(pages) / workers)
     chunks = [pages[i:i + chunk_size] for i in range(0, len(pages), chunk_size)]
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -208,7 +218,7 @@ def generate_pdf_parallel(input_path: str, output_path: str, workers = None,  pr
 
         with ProcessPoolExecutor(max_workers=workers) as executor:
             to_index = {
-                executor.submit(_render_chunk, chunk, month, year, TEMPLATE_DIR, TEMPLATE_NAME, path): i
+                executor.submit(_render_chunk, chunk, month, year, TEMPLATE_DIR, template_name, path): i
                 for i, (chunk, path) in enumerate(zip(chunks, chunk_paths))
             }
             done_count = 0
@@ -219,7 +229,6 @@ def generate_pdf_parallel(input_path: str, output_path: str, workers = None,  pr
                 if progress_callback:
                     percent = int((done_count / total) * 100)
                     progress_callback(percent)
-                    # progress_callback(done_count, len(chunks))
 
         merger = PdfWriter()
         for path in chunk_paths:

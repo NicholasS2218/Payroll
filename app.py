@@ -78,7 +78,7 @@ class ReportApp:
         # search_row.pack(fill="x", padx=24, pady=(4, 0))
 
         search_subtitle = ctk.CTkLabel(
-            search_row, text="Search Employee", font=ctk.CTkFont(size=12), text_color="#555555", anchor="w"
+            search_row, text="Search Employee", font=ctk.CTkFont(size=14), text_color="#555555", anchor="w"
         )
         search_subtitle.pack(fill="x", pady=(2, 0))
 
@@ -97,9 +97,26 @@ class ReportApp:
 
         self._build_table(table_frame)
 
+        layout_row = ctk.CTkFrame(container, fg_color="transparent")
+        layout_row.grid(row=4, column=0, sticky="ew", padx=24, pady=(8, 4))
+
+        layout_label = ctk.CTkLabel(layout_row, text="Layout:", font=ctk.CTkFont(size=14), text_color="#555555")
+        layout_label.pack(side="left", padx=(0, 8))
+
+        self.layout_var = tk.StringVar(value="LANDSCAPE")
+        self.layout_selector = ctk.CTkSegmentedButton(
+            layout_row,
+            values=["PORTRAIT", "LANDSCAPE"],
+            variable=self.layout_var,
+            fg_color="#eeeeee",
+            selected_color=BRAND_COLOR,
+            selected_hover_color=BRAND_COLOR_HOVER,
+        )
+        self.layout_selector.pack(side="left")
+        
         # status + generate
         footer = ctk.CTkFrame(container, fg_color="transparent")
-        footer.grid(row=4, column=0, sticky="ew", padx=24, pady=(4, 24))
+        footer.grid(row=5, column=0, sticky="ew", padx=24, pady=(4, 24))
         # footer.pack(fill="x", padx=24, pady=(4, 24))
 
         self.status_label = ctk.CTkLabel(footer, text="", font=ctk.CTkFont(size=14), text_color="#007700")
@@ -232,16 +249,19 @@ class ReportApp:
         # self.root.update_idletasks()
 
         # Run generation in a background thread so the UI doesn't freeze.
-        thread = threading.Thread(target=self._run_generation, args=(self.input_path, output_path))
+        thread = threading.Thread(
+            target=self._run_generation, 
+            args=(self.input_path, output_path, self.layout_var.get())
+        )
         thread.start()
 
-    def _run_generation(self, input_path, output_path):
+    def _run_generation(self, input_path, output_path, layout):
         try:
             def on_progress(percent):
                 self.root.after(0, lambda: self.status_label.configure(
-                    text=f"Progress ... {percent}%", text_color="#555555"
+                    text=f"Generating... {percent}%", text_color="#555555"
                 ))
-            generate_pdf_parallel(input_path, output_path, progress_callback=on_progress)
+            generate_pdf_parallel(input_path, output_path, layout=layout, progress_callback=on_progress)
             self.root.after(0, self._on_success, output_path)
         except Exception as e:
             self.root.after(0, self._on_error, str(e))
