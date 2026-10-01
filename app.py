@@ -28,6 +28,7 @@ class ReportApp:
         self.root = root
         self.root.title("Payroll Report Generator")
         self.root.geometry("760x560")
+        self.root.after(0, lambda: self.root.state("zoomed"))
         self.root.minsize(640, 480)
         # self.root.resizable(False, False)
 
@@ -35,16 +36,13 @@ class ReportApp:
         self.all_columns = []
         self.all_rows = []
 
+        self.selected = set()
+        self.jabatan_idx = None
+        self.dept_idx = None
+
         self.build_ui()
 
     def build_ui(self):
-        # scrollable container - everything below lives inside this instead of self.root
-        # self.scroll_frame = ctk.CTkScrollableFrame(self.root, fg_color="transparent")
-        # self.scroll_frame.pack(fill="both", expand=True)
- 
-        # container = self.scroll_frame
-
-        # uncomment the above if u want scroll
         container = self.root
         container.grid_rowconfigure(3, weight=1)  # table row expands to fill remaining space
         container.grid_columnconfigure(0, weight=1)
@@ -85,6 +83,12 @@ class ReportApp:
         search_row.grid(row=2, column=0, sticky="ew", padx=24, pady=(4, 0))
         # search_row.pack(fill="x", padx=24, pady=(4, 0))
 
+        self.meta_label = ctk.CTkLabel(
+            search_row, text="", font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#333333", anchor="w"
+        )
+        self.meta_label.pack(fill="x", pady=(0, 4))
+
         search_subtitle = ctk.CTkLabel(
             search_row, text="Search Employee", font=ctk.CTkFont(size=14), text_color="#555555", anchor="w"
         )
@@ -97,6 +101,28 @@ class ReportApp:
             search_row, placeholder_text="Search by name...", textvariable=self.search_var,
         )
         self.search_entry.pack(fill="x")
+
+        filter_row = ctk.CTkFrame(search_row, fg_color="transparent")
+        filter_row.pack(fill="x", pady=(8, 0))
+
+        self.jabatan_var = tk.StringVar(value="All")
+        self.dept_var = tk.StringVar(value="All")
+
+        menu_style = dict(
+            width=200, values=["All"], fg_color=BRAND_COLOR, button_color=BRAND_COLOR_HOVER,
+            button_hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR,
+            command=lambda _: self.on_search_changed(),
+        )
+
+        ctk.CTkLabel(filter_row, text="Jabatan:", font=ctk.CTkFont(size=14),
+                     text_color="#555555").pack(side="left")
+        self.jabatan_menu = ctk.CTkOptionMenu(filter_row, variable=self.jabatan_var, **menu_style)
+        self.jabatan_menu.pack(side="left", padx=(6, 20))
+
+        ctk.CTkLabel(filter_row, text="Department:", font=ctk.CTkFont(size=14),
+                     text_color="#555555").pack(side="left")
+        self.dept_menu = ctk.CTkOptionMenu(filter_row, variable=self.dept_var, **menu_style)
+        self.dept_menu.pack(side="left", padx=(6, 0))
 
         # preview table
         table_frame = ctk.CTkFrame(container)
@@ -149,7 +175,9 @@ class ReportApp:
         tree_container = tk.Frame(parent, bg="white")
         tree_container.pack(fill="both", expand=True, padx=1, pady=1)
 
-        self.tree = ttk.Treeview(tree_container, style="Preview.Treeview", show="headings")
+        self.tree = ttk.Treeview(tree_container, style="Preview.Treeview",
+                                show="tree headings", selectmode="extended")
+        self.tree.bind("<Button-1>", self.on_tree_click)
 
         vsb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=self.tree.xview)
@@ -159,15 +187,105 @@ class ReportApp:
         vsb.grid(row=0, column=1, sticky="ns")
         hsb.grid(row=1, column=0, sticky="ew")
 
+        # Shift + mouse wheel scrolls sideways
+        self.tree.bind("<Shift-MouseWheel>",
+                       lambda e: self.tree.xview_scroll(-1 * (e.delta // 120), "units"))
+
         tree_container.grid_rowconfigure(0, weight=1)
         tree_container.grid_columnconfigure(0, weight=1)
 
         self.set_placeholder()
 
+    def on_tree_click(self, event):
+        if not self.all_rows:
+            return
+        # only react to clicks inside the checkbox column; anywhere else just highlights the row
+        if self.tree.identify_column(event.x) != "#0":
+            return
+        if self.tree.identify_region(event.x, event.y) not in ("tree", "cell"):
+            return
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        idx = int(iid)
+        if idx in self.selected:
+            self.selected.discard(idx)
+            self.tree.item(iid, text="☐")
+        else:
+            self.selected.add(idx)
+            self.tree.item(iid, text="☑")
+        self.update_selection_status()
+        return "break"   # don't also highlight the row when toggling the checkbox
+    
+    def set_visible_selection(self, state: bool):
+        """Select / clear every row currently shown (respects the search filter)."""
+        if not self.all_rows:
+            return
+        for iid in self.tree.get_children():
+            idx = int(iid)
+            if state:
+                self.selected.add(idx)
+            else:
+                self.selected.discard(idx)
+            self.tree.item(iid, text="☑" if state else "☐")
+        self.update_selection_status()
+
+    def refresh_generate_btn(self):
+        self.generate_btn.configure(state="normal" if self.print_indices() else "disabled")
+
+    def update_selection_status(self, shown=None):
+        self.update_header()
+        shown = len(self.tree.get_children()) if shown is None else shown
+        self.status_label.configure(
+            text=f"{shown} of {len(self.all_rows)} shown, {len(self.print_indices())} will be printed.",
+            text_color="#555555",
+        )
+        self.refresh_generate_btn()
+
+    def all_visible_selected(self) -> bool:
+        iids = self.tree.get_children()
+        return bool(iids) and all(int(i) in self.selected for i in iids)
+
+    def toggle_all_visible(self):
+        """Header checkbox: select ONLY the rows shown; if that's already the selection, clear it."""
+        if not self.all_rows:
+            return
+        visible = {int(i) for i in self.tree.get_children()}
+        if visible and self.selected == visible:
+            self.selected = set()
+        else:
+            self.selected = visible
+        for iid in self.tree.get_children():
+            self.tree.item(iid, text="☑" if int(iid) in self.selected else "☐")
+        self.update_selection_status()
+
+    def print_indices(self):
+        """Rows that will be printed: ticked AND currently shown."""
+        visible = {int(i) for i in self.tree.get_children()}
+        return sorted(self.selected & visible)
+
+    def update_header(self):
+        visible = {int(i) for i in self.tree.get_children()}
+        self.tree.heading("#0", text="☑" if visible and self.selected == visible else "☐")
+
+    def setup_filters(self):
+        """Find the Jabatan / Department columns and fill the dropdowns with their values."""
+        cols = [c.lower() for c in self.all_columns]
+        self.jabatan_idx = cols.index("jabatan") if "jabatan" in cols else None
+        self.dept_idx = cols.index("department") if "department" in cols else None
+
+        for idx, menu, var in (
+            (self.jabatan_idx, self.jabatan_menu, self.jabatan_var),
+            (self.dept_idx, self.dept_menu, self.dept_var),
+        ):
+            values = sorted({row[idx] for row in self.all_rows if row[idx]}) if idx is not None else []
+            menu.configure(values=["All"] + values, state="normal" if idx is not None else "disabled")
+            var.set("All")
+
     def set_placeholder(self):
         self.tree["columns"] = ["info"]
-        self.tree.column("info", anchor="center")
-        self.tree.heading("info", text="")
+        self.tree.column("#0", width=0, minwidth=0, stretch=False)
+        self.tree.heading("#0", text="")
         self.tree.delete(*self.tree.get_children())
         self.tree.insert("", "end", values=("Select a file to preview its data here.",))
 
@@ -181,7 +299,7 @@ class ReportApp:
             return
 
         try:
-            columns, rows, _ = preview_data(path)
+            columns, rows, meta = preview_data(path)
         except Exception as e:
             messagebox.showerror("Error reading file", str(e))
             return
@@ -189,14 +307,19 @@ class ReportApp:
         self.input_path = path
         self.file_label.configure(text=os.path.basename(path))
 
+        left = " ".join(p for p in ["Payroll", meta.get("company")] if p)
+        right = meta.get("bulan")
+        self.meta_label.configure(text="  |  ".join(p for p in [left, right] if p))
+
         self.all_columns = columns
         self.all_rows = rows
 
+        self.setup_filters()
         self.search_var.set("") 
 
-        self.populate_table(columns, rows)
-        self.generate_btn.configure(state="normal")
-        self.status_label.configure(text=f"{len(rows)} record(s) loaded.", text_color="#007700")
+        self.selected = set(range(len(rows)))     # everything selected by default
+        self.populate_table(columns, rows, list(range(len(rows))))
+        self.update_selection_status()
         
         # if path:
         #     self.input_path.set(path)
@@ -208,18 +331,29 @@ class ReportApp:
             return
 
         query = self.search_var.get().strip().lower()
-        if not query:
-            filtered = self.all_rows
-        else:
-            # column 0 is always "Name"
-            filtered = [row for row in self.all_rows if query in str(row[0]).lower()]
+        jab = self.jabatan_var.get()
+        dept = self.dept_var.get()
 
-        self.populate_table(self.all_columns, filtered)
-        self.status_label.configure(text=f"{len(filtered)} of {len(self.all_rows)} record(s) shown.", text_color="#555555")
+        def matches(row):
+            if query and query not in str(row[0]).lower():
+                return False
+            if jab != "All" and self.jabatan_idx is not None and row[self.jabatan_idx] != jab:
+                return False
+            if dept != "All" and self.dept_idx is not None and row[self.dept_idx] != dept:
+                return False
+            return True
 
-    def populate_table(self, columns, rows):
+        pairs = [(i, row) for i, row in enumerate(self.all_rows) if matches(row)]
+
+        self.populate_table(self.all_columns, [r for _, r in pairs], [i for i, _ in pairs])
+        self.update_selection_status(shown=len(pairs))
+
+    def populate_table(self, columns, rows, indices):
         self.tree.delete(*self.tree.get_children())
         self.tree["columns"] = columns
+
+        self.tree.column("#0", width=44, minwidth=44, stretch=False, anchor="center")
+        self.tree.heading("#0", text="☐", command=self.toggle_all_visible)
 
         font = tkfont.Font(font=("Arial", 10))
         header_font = tkfont.Font(font=("Arial", 10, "bold"))
@@ -232,10 +366,12 @@ class ReportApp:
                 default=80,
             )
             anchor = "w" if i == 0 else "center"
-            self.tree.column(col, anchor=anchor, width=content_width + 24, minwidth=60, stretch=True)
+            w = content_width + 24
+            self.tree.column(col, anchor=anchor, width=w, minwidth=w, stretch=False)
 
-        for row in rows:
-            self.tree.insert("", "end", values=row)
+        for idx, row in zip(indices, rows):
+            mark = "☑" if idx in self.selected else "☐"
+            self.tree.insert("", "end", iid=str(idx), text=mark, values=row)
 
     def generate_report(self):
         if not self.input_path or not os.path.isfile(self.input_path):
@@ -267,17 +403,17 @@ class ReportApp:
         # Run generation in a background thread so the UI doesn't freeze.
         thread = threading.Thread(
             target=self.run_generation, 
-            args=(self.input_path, output_path, self.layout_var.get())
+            args=(self.input_path, output_path, self.layout_var.get(), self.print_indices())
         )
         thread.start()
 
-    def run_generation(self, input_path, output_path, layout):
+    def run_generation(self, input_path, output_path, layout, only):
         try:
             def on_progress(percent):
                 self.root.after(0, lambda: self.status_label.configure(
                     text=f"Generating... {percent}%", text_color="#555555"
                 ))
-            generate_pdf_parallel(input_path, output_path, layout=layout, progress_callback=on_progress)
+            generate_pdf_parallel(input_path, output_path, layout=layout, progress_callback=on_progress, only=only)
             self.root.after(0, self.on_success, output_path)
         except Exception as e:
             traceback.print_exc()
@@ -285,14 +421,14 @@ class ReportApp:
 
     def on_success(self, output_path):
         self.status_label.configure(text="Report generated successfully!", text_color="#007700")
-        self.generate_btn.configure(state="normal")
+        self.refresh_generate_btn()
         self.select_btn.configure(state="normal")
         if messagebox.askyesno("Success", f"Report saved to:\n{output_path}\n\nOpen it now?"):
             self.open_file(output_path)
 
     def on_error(self, error_message):
         self.status_label.configure(text="Failed to generate report.", text_color="#cc0000")
-        self.generate_btn.configure(state="normal")
+        self.refresh_generate_btn()
         self.select_btn.configure(state="normal")
         messagebox.showerror("Error", f"Something went wrong:\n\n{error_message}")
 

@@ -246,22 +246,31 @@ def normalize_record(row: pd.Series, headers: list, sections: dict, meta: dict) 
 def preview_data(input_path: str):
     headers, body, meta = read_table(input_path)
     sections = get_sections(headers)
+    first_money = sections["earn"][0]
 
     last = len(headers) - 1
-    idxs = [i for i in range(sections["earn"][0], len(headers)) if headers[i] or i == last]
+    idxs = [i for i in range(len(headers)) if headers[i] or i == last]
 
-    seen, columns = {}, ["Name"]
+    seen, columns = {}, []
     for i in idxs:
         label = field_label(headers[i] or "Total")
         seen[label] = seen.get(label, 0) + 1
         columns.append(label if seen[label] == 1 else f"{label} ({seen[label]})")
 
-    rows = [[row[0]] + [fmt(parse_currency_value(row[i])) for i in idxs]
-            for _, row in body.iterrows()]
+    def cell(row, i):
+        if i < first_money:
+            v = row[i]
+            return "" if pd.isna(v) else str(v).strip()
+        return fmt(parse_currency_value(row[i]))
 
-    return columns, rows, headers
+    rows = [[cell(row, i) for i in idxs] for _, row in body.iterrows()]
 
-def build_pages(body, headers, meta, page_size):
+    return columns, rows, meta
+
+def build_pages(body, headers, meta, page_size, only=None):
+    if only is not None:
+        body = body.iloc[sorted(only)]
+
     sections = get_sections(headers)
     records = [normalize_record(row, headers, sections, meta) for _, row in body.iterrows()]
     return [records[i:i + page_size] for i in range(0, len(records), page_size)]
@@ -294,8 +303,8 @@ def generate_pdf(input_path: str, output_path: str, layout: str = DEFAULT_LAYOUT
     HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
     return output_path
 
-def generate_pdf_parallel(input_path: str, output_path: str, layout: str = DEFAULT_LAYOUT,
-                           workers = None,  progress_callback = None) -> str:
+def generate_pdf_parallel(input_path: str, output_path: str, layout: str= DEFAULT_LAYOUT,
+                           workers= None,  progress_callback= None, only= None) -> str:
 
     if layout not in LAYOUTS:
         raise ValueError(f"Unknown layout: {layout}. Choose from {list(LAYOUTS)}.")
@@ -304,7 +313,7 @@ def generate_pdf_parallel(input_path: str, output_path: str, layout: str = DEFAU
     page_size = config["page_size"]
 
     headers, body, meta = read_table(input_path)
-    pages = build_pages(body, headers, meta, page_size)
+    pages = build_pages(body, headers, meta, page_size, only)
     if not pages:
         raise ValueError("No records found to generate.")
 

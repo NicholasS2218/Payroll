@@ -50,10 +50,10 @@ hiddenimports=['weasyprint', 'PIL._tkinter_finder'],
 ```bash
 pyinstaller app.spec
 ```
-Output will be at `dist/app.exe`.
+Output will be at `dist/app`.
 
 ### 6. Test before sharing
-Run `dist/app.exe` directly (not from the VSCode terminal/venv) to confirm it works standalone. Ideally test on a machine other than your dev machine.
+Run `dist/app/app.exe` directly (not from the VSCode terminal/venv) to confirm it works standalone. Ideally test on a machine other than your dev machine.
 
 ---
 
