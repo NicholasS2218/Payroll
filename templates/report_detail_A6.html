@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    @page {
+        size: A6 landscape;
+        margin: 2mm;
+    }
+
+    * {
+        box-sizing: border-box;
+        font-family: Arial, sans-serif;
+    }
+
+    html, body { margin: 0; padding: 0; }
+
+    .page {
+        display: grid;
+        grid-template-rows: 1fr;
+        width: 100%;
+        height: 100mm; /* A6 landscape: 105mm minus 2 x 2mm margins = 101mm usable */
+        page-break-after: always;
+        page-break-inside: avoid;
+        overflow: hidden;
+    }
+
+    .page:last-child { page-break-after: auto; }
+
+    .card {
+        padding: 3mm;
+        display: flex;
+        flex-direction: column;
+        font-size: 7pt;
+    }
+
+    .company {
+        text-align: center;
+        font-weight: bold;
+        font-size: 10pt;
+        margin-bottom: 2mm;
+    }
+
+    .slip {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+    }
+
+    .slip td.cell {
+        border: 1px solid #000;
+        vertical-align: top;
+        padding: 2mm 3mm;
+        width: 50%;
+    }
+
+    .info div { padding: 0.6mm 0; }
+    .info b { display: inline-block; font-weight: 400; width: 26mm; }
+
+    .section-title {
+        font-weight: bold;
+        text-align: center;
+        border-bottom: 1px solid #000;
+        padding-bottom: 1mm;
+        margin-bottom: 1mm;
+    }
+
+    .slip td.earn { padding: 0; border-bottom: none; }
+    .slip td.sum  { padding: 0; border-top: none; }
+
+    .pair { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .pair td { padding: 0.8mm 2mm; }
+    .pair td.label { width: 25%; }
+    .pair td.rp    { width: 5%; }
+    .pair td.num   { width: 20%; text-align: right; font-variant-numeric: tabular-nums; }
+    .pair td.div   { padding-left: 2mm; border-left: 1px solid #000; }
+    .pair .section-title {
+        text-align: left;
+        border-bottom: none;
+        padding: 3mm 2mm 1mm;
+        margin: 0;
+        font-weight: normal;
+    }
+    .pair tr.total td {
+        border-bottom: 1px solid #000;
+        padding-top: 3mm;
+        padding-bottom: 1.5mm;
+    }
+
+    .items { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .items td { padding: 0.8mm 2mm; }
+    .items td.label { width: 25%; }
+    .items td.rp    { width: 5%; }
+    .items td.num   { width: 20%; text-align: right; font-variant-numeric: tabular-nums; }
+    .items td.fill  { width: 50%; }
+
+    .items tr:first-child td { padding-top: 3mm; }
+    .items tr:nth-last-child(2) td.rp,
+    .items tr:nth-last-child(2) td.num { border-bottom: 1px solid #000; }
+
+    .terbilang {
+        padding: 3mm 2mm 2mm;
+    }
+</style>
+</head>
+<body>
+    {% for page in pages %}
+    <div class="page">
+        {% for r in page %}
+        <div class="card">
+            <div class="company">{{ company }}<br/>SLIP GAJI</div>
+            <table class="slip">
+                <tr>
+                    <td class="cell info">
+                        <div><b>Nama</b>: {{ r.nama }}</div>
+                        <div><b>No NIK</b>: {{ r.no_nik }}</div>
+                        <div><b>Jabatan</b>: {{ r.jabatan }}</div>
+                        <div><b>Department</b>: {{ r.department }}</div>
+                    </td>
+                    <td class="cell info">
+                        <div><b>Bulan</b>: {{ r.bulan }}</div>
+                        <div><b>Status</b>: {{ r.status }}</div>
+                        <div><b>Bank</b>: {{ r.bank }}</div>
+                        <div><b>No Rekening</b>: {{ r.no_rekening }}</div>
+                    </td>
+                </tr>
+                {% set el = r.earnings|rejectattr('total')|list %}
+                {% set dl = r.deductions|rejectattr('total')|list %}
+                {% set et = (r.earnings|selectattr('total')|list)|last %}
+                {% set dt = (r.deductions|selectattr('total')|list)|last %}
+                <tr>
+                    <td class="cell earn" colspan="2">
+                        <table class="pair">
+                            <colgroup>
+                                <col style="width:25%"><col style="width:5%"><col style="width:20%">
+                                <col style="width:25%"><col style="width:5%"><col style="width:20%">
+                            </colgroup>
+                            <tr>
+                                <td class="section-title" colspan="3">PENGHASILAN:</td>
+                                <td class="section-title div" colspan="3">PENGURANG:</td>
+                            </tr>
+                            {% for i in range([el|length, dl|length]|max) %}
+                            <tr>
+                                <td class="label">{{ el[i].label if i < el|length }}</td>
+                                <td class="rp">{% if i < el|length %}Rp.{% endif %}</td>
+                                <td class="num">{% if i < el|length %}{{ el[i].value }}{% endif %}</td>
+                                
+                                <td class="label div">{{ dl[i].label if i < dl|length }}</td>
+                                <td class="rp">{% if i < dl|length %}Rp.{% endif %}</td>
+                                <td class="num">{% if i < dl|length %}{{ dl[i].value }}{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                            <tr class="total">
+                                <td class="label">{{ et.label if et }}</td>
+                                <td class="rp">{% if et %}Rp.{% endif %}</td>
+                                <td class="num">{% if et %}{{ et.value }}{% endif %}</td>
+
+                                <td class="label div">{{ dt.label if dt }}</td>
+                                <td class="rp">{% if dt %}Rp.{% endif %}</td>
+                                <td class="num">{% if dt %}{{ dt.value }}{% endif %}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="cell sum" colspan="2">
+                        <table class="items">
+                            {% for x in r.summary %}
+                            <tr {% if x.total %}class="total"{% endif %}>
+                                <td class="label">{{ x.label }}</td>
+                                <td class="rp">Rp.</td>
+                                <td class="num">{% if x.negative %}- {% endif %}{{ x.value }}</td>
+                                <td class="fill"></td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+                        <div class="terbilang">{{ r.terbilang }}</div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        {% endfor %}
+
+        {% for _ in range(1 - page|length) %}
+        <div class="card empty"></div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</body>
+</html>

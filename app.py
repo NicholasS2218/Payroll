@@ -1,11 +1,19 @@
+try:
+    import pyi_splash
+    pyi_splash.update_text("Loading...")
+except ImportError:
+    pyi_splash = None
+
 import os
 import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
 import customtkinter as ctk
-from tkinter import filedialog, messagebox, ttk
+import traceback
 
+from concurrent.futures.process import BrokenProcessPool
+from tkinter import filedialog, messagebox, ttk
 from generator import generate_pdf_parallel, generate_pdf, preview_data
 
 ctk.set_appearance_mode("light")
@@ -27,9 +35,9 @@ class ReportApp:
         self.all_columns = []
         self.all_rows = []
 
-        self._build_ui()
+        self.build_ui()
 
-    def _build_ui(self):
+    def build_ui(self):
         # scrollable container - everything below lives inside this instead of self.root
         # self.scroll_frame = ctk.CTkScrollableFrame(self.root, fg_color="transparent")
         # self.scroll_frame.pack(fill="both", expand=True)
@@ -83,7 +91,7 @@ class ReportApp:
         search_subtitle.pack(fill="x", pady=(2, 0))
 
         self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", self._on_search_changed)
+        self.search_var.trace_add("write", self.on_search_changed)
 
         self.search_entry = ctk.CTkEntry(
             search_row, placeholder_text="Search by name...", textvariable=self.search_var,
@@ -95,7 +103,7 @@ class ReportApp:
         table_frame.grid(row=3, column=0, sticky="nsew", padx=24, pady=(12, 8))
         # table_frame.pack(fill="both", expand=True, padx=24, pady=(12, 8))
 
-        self._build_table(table_frame)
+        self.build_table(table_frame)
 
         layout_row = ctk.CTkFrame(container, fg_color="transparent")
         layout_row.grid(row=4, column=0, sticky="ew", padx=24, pady=(8, 4))
@@ -103,14 +111,15 @@ class ReportApp:
         layout_label = ctk.CTkLabel(layout_row, text="Layout:", font=ctk.CTkFont(size=14), text_color="#555555")
         layout_label.pack(side="left", padx=(0, 8))
 
-        self.layout_var = tk.StringVar(value="LANDSCAPE")
+        self.layout_var = tk.StringVar(value="A4")
         self.layout_selector = ctk.CTkSegmentedButton(
             layout_row,
-            values=["PORTRAIT", "LANDSCAPE"],
+            values=["A4", "A6"],
             variable=self.layout_var,
             fg_color="#eeeeee",
             selected_color=BRAND_COLOR,
             selected_hover_color=BRAND_COLOR_HOVER,
+            text_color=TEXT_COLOR
         )
         self.layout_selector.pack(side="left")
         
@@ -131,7 +140,7 @@ class ReportApp:
         # self.status_label = tk.Label(self.root, text="", font=("Arial", 9), fg="#007700")
         # self.status_label.pack()
 
-    def _build_table(self, parent):
+    def build_table(self, parent):
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("Preview.Treeview", rowheight=26, font=("Arial", 10), background="white", fieldbackground="white")
@@ -153,9 +162,9 @@ class ReportApp:
         tree_container.grid_rowconfigure(0, weight=1)
         tree_container.grid_columnconfigure(0, weight=1)
 
-        self._set_placeholder()
+        self.set_placeholder()
 
-    def _set_placeholder(self):
+    def set_placeholder(self):
         self.tree["columns"] = ["info"]
         self.tree.column("info", anchor="center")
         self.tree.heading("info", text="")
@@ -185,7 +194,7 @@ class ReportApp:
 
         self.search_var.set("") 
 
-        self._populate_table(columns, rows)
+        self.populate_table(columns, rows)
         self.generate_btn.configure(state="normal")
         self.status_label.configure(text=f"{len(rows)} record(s) loaded.", text_color="#007700")
         
@@ -194,7 +203,7 @@ class ReportApp:
         #     self.generate_btn.config(state=tk.NORMAL)
         #     self.status_label.config(text="")
 
-    def _on_search_changed(self, *args):
+    def on_search_changed(self, *args):
         if not self.all_rows:
             return
 
@@ -205,10 +214,10 @@ class ReportApp:
             # column 0 is always "Name"
             filtered = [row for row in self.all_rows if query in str(row[0]).lower()]
 
-        self._populate_table(self.all_columns, filtered)
+        self.populate_table(self.all_columns, filtered)
         self.status_label.configure(text=f"{len(filtered)} of {len(self.all_rows)} record(s) shown.", text_color="#555555")
 
-    def _populate_table(self, columns, rows):
+    def populate_table(self, columns, rows):
         self.tree.delete(*self.tree.get_children())
         self.tree["columns"] = columns
 
@@ -243,6 +252,13 @@ class ReportApp:
         if not output_path:
             return
 
+        try:
+            with open(output_path, "ab"):
+                pass
+        except PermissionError:
+            messagebox.showerror("Cannot save", "That file is open in another program. Close it or choose a different name.")
+            return
+
         self.generate_btn.configure(state="disabled")
         self.select_btn.configure(state="disabled")
         self.status_label.configure(text="Generating report...", text_color="#555555")
@@ -250,36 +266,52 @@ class ReportApp:
 
         # Run generation in a background thread so the UI doesn't freeze.
         thread = threading.Thread(
-            target=self._run_generation, 
+            target=self.run_generation, 
             args=(self.input_path, output_path, self.layout_var.get())
         )
         thread.start()
 
-    def _run_generation(self, input_path, output_path, layout):
+    def run_generation(self, input_path, output_path, layout):
         try:
             def on_progress(percent):
                 self.root.after(0, lambda: self.status_label.configure(
                     text=f"Generating... {percent}%", text_color="#555555"
                 ))
             generate_pdf_parallel(input_path, output_path, layout=layout, progress_callback=on_progress)
-            self.root.after(0, self._on_success, output_path)
+            self.root.after(0, self.on_success, output_path)
         except Exception as e:
-            self.root.after(0, self._on_error, str(e))
+            traceback.print_exc()
+            self.root.after(0, self.on_error, self.describe_error(e))
 
-    def _on_success(self, output_path):
+    def on_success(self, output_path):
         self.status_label.configure(text="Report generated successfully!", text_color="#007700")
         self.generate_btn.configure(state="normal")
         self.select_btn.configure(state="normal")
         if messagebox.askyesno("Success", f"Report saved to:\n{output_path}\n\nOpen it now?"):
-            self._open_file(output_path)
+            self.open_file(output_path)
 
-    def _on_error(self, error_message):
+    def on_error(self, error_message):
         self.status_label.configure(text="Failed to generate report.", text_color="#cc0000")
         self.generate_btn.configure(state="normal")
         self.select_btn.configure(state="normal")
         messagebox.showerror("Error", f"Something went wrong:\n\n{error_message}")
 
-    def _open_file(self, path):
+    def describe_error(self, e: Exception) -> str:
+        if isinstance(e, PermissionError):
+            return ("Cannot write to the output file.\n\n"
+                    "It is most likely still open in a PDF viewer or another program, "
+                    "or the folder is protected. Close it, or save under a different name, "
+                    f"then try again.\n\nDetails: {e}")
+        if isinstance(e, FileNotFoundError):
+            return f"A file or folder could not be found.\n\nDetails: {e}"
+        if isinstance(e, BrokenProcessPool):
+            return ("A background worker crashed while rendering. "
+                    "Try again, or check that the template files are present.")
+        if isinstance(e, ValueError):
+            return str(e)  # your own messages, e.g. missing column
+        return f"{type(e).__name__}: {e}"
+
+    def open_file(self, path):
         if sys.platform.startswith("win"):
             os.startfile(path)
         elif sys.platform.startswith("darwin"):
@@ -294,4 +326,8 @@ if __name__ == "__main__":
 
     root = ctk.CTk()
     app = ReportApp(root)
+
+    if pyi_splash:
+        pyi_splash.close()
+        
     root.mainloop()

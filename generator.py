@@ -10,24 +10,22 @@ from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pypdf import PdfWriter
 
-def _render_chunk(pages_chunk, month, year, template_dir, template_name, out_path):
-    """Runs in a separate process: render a subset of pages into its own standalone PDF."""
+def render_chunk(pages_chunk, meta, template_dir, template_name, out_path):
     env = Environment(loader=FileSystemLoader(template_dir))
     template = env.get_template(template_name)
-    html_string = template.render(pages=pages_chunk, month=month, year=year)
+    html_string = template.render(pages=pages_chunk, **meta)
     HTML(string=html_string, base_url=template_dir).write_pdf(out_path)
     return out_path
 
 BULAN = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
 
-# TEMPLATE_NAME = "report_3x2.html"
-# PAGE_SIZE = 6  # records per page
-
 LAYOUTS = {
-    "PORTRAIT": {"template": "report_2x2.html", "page_size": 4},
-    "LANDSCAPE": {"template": "report_3x2.html", "page_size": 6},
+    # "PORTRAIT 2x2": {"template": "report_2x2.html", "page_size": 4},
+    # "LANDSCAPE 3x2": {"template": "report_3x2.html", "page_size": 6},
+    "A4": {"template": "report_detail.html", "page_size": 2},
+    "A6": {"template": "report_detail_A6.html", "page_size": 1},
 }
-DEFAULT_LAYOUT = "LANDSCAPE"
+DEFAULT_LAYOUT = "A4"
 
 def get_base_path():
     if getattr(sys, 'frozen', False):
@@ -38,23 +36,50 @@ TEMPLATE_DIR = os.path.join(get_base_path(), "templates")
 
 
 def read_table(file_path: str):
-    """Read a CSV or Excel file into a DataFrame, and derive the list of
-    value fields (every column except 'name') from the file itself."""
     ext = os.path.splitext(file_path)[1].lower()
     if ext in (".csv", ".txt"):
-        df = pd.read_csv(file_path, sep=None, engine="python", encoding="utf-8-sig")
+        raw = pd.read_csv(file_path, sep=None, engine="python", encoding="utf-8-sig", header=None, dtype=str)
     elif ext in (".xlsx", ".xls"):
-        df = pd.read_excel(file_path)
+        raw = pd.read_excel(file_path, header=None, dtype=str)
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
-    # normalize column headers: lowercase + spaces -> underscores
-    df.columns = [col.strip().lower().replace(" ", "_") for col in df.columns]
+    meta = {"company": "", "bulan": ""}
+    header_idx = None
+    for i in range(len(raw)):
+        row = raw.iloc[i]
+        first = str(row.iloc[0]).strip().lower()
+        if first == "perusahaan":
+            meta["company"] = first_value(row.iloc[1:])
+        elif first == "bulan":
+            val = first_value(row.iloc[1:])
+            try:
+                d = pd.to_datetime(val)
+                meta["bulan"] = f"{BULAN[d.month - 1]} {d.year}"
+            except (ValueError, TypeError):
+                meta["bulan"] = val.upper()
+        elif first == "nama":
+            header_idx = i
+            break
+    if header_idx is None:
+        raise ValueError("Could not find column 'Nama'")
 
-    # everything except 'name' is a value field, in file order
-    fields = [col for col in df.columns if col != "name"]
+    headers = ["" if pd.isna(h) else " ".join(str(h).split()) for h in raw.iloc[header_idx]]
+    body = raw.iloc[header_idx + 1:].reset_index(drop=True)
+    body.columns = range(len(headers))  # positional, so duplicate headers are fine
+    body = body[body[0].notna() & (body[0].str.strip() != "")].reset_index(drop=True)
 
-    return df, fields
+    if not meta["bulan"]:
+        now = datetime.now()
+        meta["bulan"] = f"{BULAN[now.month - 1]} {now.year}"
+
+    # # normalize column headers: lowercase + spaces -> underscores
+    # df.columns = [col.strip().lower().replace(" ", "_") for col in df.columns]
+
+    # # everything except 'name' is a value field, in file order
+    # fields = [col for col in df.columns if col != "name"]
+
+    return headers, body, meta
 
 
 def fmt(value) -> str:
@@ -91,74 +116,168 @@ def parse_currency_value(value) -> float:
     except ValueError:
         return 0.0
 
-LABEL_OVERRIDES = {
-    "total": "GAJI YANG DITRANSFER",
-}
+UPPER_LABELS = {"total penghasilan", "total pengurang", "gaji bersih"}
 
 def field_label(field: str) -> str:
-    """Derive a display label from a field key, e.g. 'gaji_bruto' -> 'GAJI BRUTO'."""
-    if field in LABEL_OVERRIDES:
-        return LABEL_OVERRIDES[field]
-    return field.replace("_", " ").upper()
+    # return field.replace("_", " ").upper()
+    label = field.replace("_", " ")
+    return label.upper() if label.lower() in UPPER_LABELS else label
 
-DEDUCTION = {"bpjs_tk", "pph_21", "uang_makan", "seragam"} #HARDCODE, UPDATE THIS LATER
+def first_value(cells) -> str:
+    for c in cells:
+        if pd.notna(c) and str(c).strip():
+            return str(c).strip()
+    return ""
 
-def normalize_record(row: pd.Series, fields: list) -> dict:
-    """Turn a raw row into a dict with every expected field present."""
-    record = {"name": row.get("name", "Unknown"), "rows": []}
+def terbilang_value(n: int) -> str:
+    satuan = ["", "satu", "dua", "tiga", "empat", "lima", "enam",
+              "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"]
+    if n < 12:
+        return satuan[n]
+    if n < 20:
+        return f"{terbilang_value(n - 10)} belas"
+    if n < 100:
+        return f"{terbilang_value(n // 10)} puluh {terbilang_value(n % 10)}".strip()
+    if n < 200:
+        return f"seratus {terbilang_value(n - 100)}".strip()
+    if n < 1000:
+        return f"{terbilang_value(n // 100)} ratus {terbilang_value(n % 100)}".strip()
+    if n < 2000:
+        return f"seribu {terbilang_value(n - 1000)}".strip()
+    if n < 1_000_000:
+        return f"{terbilang_value(n // 1000)} ribu {terbilang_value(n % 1000)}".strip()
+    if n < 1_000_000_000:
+        return f"{terbilang_value(n // 1_000_000)} juta {terbilang_value(n % 1_000_000)}".strip()
+    if n < 1_000_000_000_000:
+        return f"{terbilang_value(n // 1_000_000_000)} miliar {terbilang_value(n % 1_000_000_000)}".strip()
+    return f"{terbilang_value(n // 1_000_000_000_000)} triliun {terbilang_value(n % 1_000_000_000_000)}".strip()
 
-    for field in fields:
-        raw_value = parse_currency_value(row[field]) if field in row else 0.0
-        if raw_value > 0:
-            record["rows"].append({
-                "key": field,
-                "label": field_label(field),
-                "value": fmt(raw_value),
-                "negative": field in DEDUCTION
-            })
-        # record[field] = fmt(raw_value)
 
-    return record
+def terbilang(value) -> str:
+    n = int(round(value))
+    words = terbilang_value(n) if n > 0 else "nol"
+    return f"{words.capitalize()} rupiah"
+
+def get_sections(headers: list) -> dict:
+    """Split columns into earnings / deductions / summary using marker headers."""
+    low = [h.lower() for h in headers]
+
+    def pos(name):
+        if name not in low:
+            raise ValueError(f"Missing required column: '{name}'. "
+                             f"Found columns: {', '.join(h for h in headers if h)}")
+        return low.index(name)
+
+    gaji, tp, tpg = pos("gaji"), pos("total penghasilan"), pos("total pengurang")
+    return {
+        "earn": range(gaji, tp + 1),
+        "deduct": range(tp + 1, tpg + 1),
+        "summary": range(tpg + 1, len(headers)),
+    }
+
+
+def build_rows(row, headers, idxs): # , negative_after=None):
+    out = []
+    for i in idxs:
+        label = headers[i]
+        if not label:
+            continue
+        value = parse_currency_value(row[i])
+        is_total = label.lower().startswith("total")
+        if value == 0 and not is_total:
+            continue
+        out.append({
+            "label": field_label(label),
+            "value": fmt(value),
+            "total": is_total,
+            "negative": False,
+            # "negative": negative_after is not None and i > negative_after,
+        })
+    return out
+
+
+def normalize_record(row: pd.Series, headers: list, sections: dict, meta: dict) -> dict:
+    low = [h.lower() for h in headers]
+
+    def info(name):
+        if name not in low:
+            return ""
+        v = row[low.index(name)]
+        return "" if pd.isna(v) else str(v).strip()
+
+    summary_idxs = list(sections["summary"])
+
+    # base = "gaji bersih" if present, otherwise the first summary column
+    base = next((i for i in summary_idxs if low[i] == "gaji bersih"),
+                summary_idxs[0] if summary_idxs else None)
+
+    summary = build_rows(row, headers, summary_idxs)
+    # summary = build_rows(row, headers, summary_idxs, negative_after=base)
+
+    if base is None:
+        transfer = 0.0
+    else:
+        deductions = sum(parse_currency_value(row[i])
+                         for i in summary_idxs if i > base)
+        transfer = parse_currency_value(row[base]) - deductions
+
+    summary.append({
+        "label": "Nilai Dibayar",
+        "value": fmt(transfer),
+        "total": True,
+        "negative": False,
+    })
+
+    return {
+        "nama": info("nama") or "Unknown",
+        "no_nik": info("no nik"),
+        "jabatan": info("jabatan"),
+        "department": info("department"),
+        "status": info("status"),
+        "bank": info("bank"),
+        "no_rekening": info("no rekening"),
+        "bulan": meta["bulan"],
+        "earnings": build_rows(row, headers, sections["earn"]),
+        "deductions": build_rows(row, headers, sections["deduct"]),
+        "summary": summary,
+        "terbilang": terbilang(transfer),
+    }
 
 def preview_data(input_path: str):
-    """Read a file and return (columns, rows, fields) for a UI preview table,
-    without generating the PDF."""
-    df, fields = read_table(input_path)
+    headers, body, meta = read_table(input_path)
+    sections = get_sections(headers)
 
-    if "name" not in df.columns:
-        raise ValueError(f"Missing required column: 'name'. Found columns: {', '.join(df.columns)}")
+    last = len(headers) - 1
+    idxs = [i for i in range(sections["earn"][0], len(headers)) if headers[i] or i == last]
 
-    columns = ["Name"] + [field_label(f) for f in fields]
+    seen, columns = {}, ["Name"]
+    for i in idxs:
+        label = field_label(headers[i] or "Total")
+        seen[label] = seen.get(label, 0) + 1
+        columns.append(label if seen[label] == 1 else f"{label} ({seen[label]})")
 
-    rows = []
-    for _, row in df.iterrows():
-        r = [row.get("name", "Unknown")]
-        for field in fields:
-            raw_value = parse_currency_value(row[field]) if field in row else 0.0
-            r.append(fmt(raw_value))
-        rows.append(r)
+    rows = [[row[0]] + [fmt(parse_currency_value(row[i])) for i in idxs]
+            for _, row in body.iterrows()]
 
-    return columns, rows, fields
+    return columns, rows, headers
 
-def build_pages(df: pd.DataFrame, fields: list, page_size: int) -> list:
-    """Group normalized records into chunks of PAGE_SIZE for pagination."""
-    records = [normalize_record(row, fields) for _, row in df.iterrows()]
-    pages = [records[i:i + page_size] for i in range(0, len(records), page_size)]
-    return pages
+def build_pages(body, headers, meta, page_size):
+    sections = get_sections(headers)
+    records = [normalize_record(row, headers, sections, meta) for _, row in body.iterrows()]
+    return [records[i:i + page_size] for i in range(0, len(records), page_size)]
 
 
-def render_html(pages: list, template_name: str) -> str:
-    """Render the Jinja2 template with the paginated records."""
+def render_html(pages: list, template_name: str, meta: dict) -> str:
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
     template = env.get_template(template_name)
 
-    now = datetime.now()
-    month = BULAN[now.month - 1]
-    year = now.year
+    # now = datetime.now()
+    # month = BULAN[now.month - 1]
+    # year = now.year
 
     # field_defs = [{"key": f, "label": field_label(f)} for f in fields]
 
-    return template.render(pages=pages, month=month, year=year)
+    return template.render(pages=pages, **meta)
 
 """Full pipeline: read file -> normalize -> render -> save PDF."""
 def generate_pdf(input_path: str, output_path: str, layout: str = DEFAULT_LAYOUT) -> str:
@@ -169,13 +288,9 @@ def generate_pdf(input_path: str, output_path: str, layout: str = DEFAULT_LAYOUT
     template_name = config["template"]
     page_size = config["page_size"]
 
-    df, fields = read_table(input_path)
-
-    if "name" not in df.columns:
-        raise ValueError(f"Missing required column: 'name'. Found columns: {', '.join(df.columns)}")
-
-    pages = build_pages(df, fields, page_size)
-    html_string = render_html(pages, template_name)
+    headers, body, meta = read_table(input_path)
+    pages = build_pages(body, headers, meta, page_size)
+    html_string = render_html(pages, template_name, meta)
     HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
     return output_path
 
@@ -188,12 +303,8 @@ def generate_pdf_parallel(input_path: str, output_path: str, layout: str = DEFAU
     template_name = config["template"]
     page_size = config["page_size"]
 
-    df, fields = read_table(input_path)
-
-    if "name" not in df.columns:
-        raise ValueError(f"Missing required column: 'name'. Found columns: {', '.join(df.columns)}")
-
-    pages = build_pages(df, fields, page_size)
+    headers, body, meta = read_table(input_path)
+    pages = build_pages(body, headers, meta, page_size)
     if not pages:
         raise ValueError("No records found to generate.")
 
@@ -201,13 +312,9 @@ def generate_pdf_parallel(input_path: str, output_path: str, layout: str = DEFAU
 
     # not worth the process-spawn overhead for a handful of pages
     if workers <= 1 or len(pages) < workers * 2:
-        html_string = render_html(pages, template_name)
+        html_string = render_html(pages, template_name, meta)
         HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
         return output_path
-
-    now = datetime.now()
-    month = BULAN[now.month - 1]
-    year = now.year
 
     target_chunks = min(len(pages), workers * 4)
     chunk_size = max(1, math.ceil(len(pages) / target_chunks))
@@ -218,7 +325,7 @@ def generate_pdf_parallel(input_path: str, output_path: str, layout: str = DEFAU
 
         with ProcessPoolExecutor(max_workers=workers) as executor:
             to_index = {
-                executor.submit(_render_chunk, chunk, month, year, TEMPLATE_DIR, template_name, path): i
+                executor.submit(render_chunk, chunk, meta, TEMPLATE_DIR, template_name, path): i
                 for i, (chunk, path) in enumerate(zip(chunks, chunk_paths))
             }
             done_count = 0
