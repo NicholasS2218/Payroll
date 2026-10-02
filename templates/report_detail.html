@@ -40,7 +40,7 @@
     .card:nth-child(1) { top: 0; }
     .card:nth-child(2) { top: 148.5mm; }
 
-    .page::after {
+    .page.full::after {
         content: "";
         position: absolute;
         left: 5mm;
@@ -138,7 +138,7 @@
     {% endmacro %}
 
     {% for page in pages %}
-    <div class="page">
+    <div class="page{% if page|length == 2 %} full{% endif %}">
         {% for r in page %}
         <div class="card">
             <div class="company">{{ company }}<br/>SLIP GAJI</div>

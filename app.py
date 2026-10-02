@@ -252,16 +252,16 @@ class ReportApp:
             self.root.after_cancel(self._search_job)
         self._search_job = self.root.after(250, self.on_search_changed)
 
-    def _load_file(self, path):
+    def load_file(self, path):
         """Runs in a background thread: only reads the file, never touches the UI."""
         try:
             result = preview_data(path)
         except Exception as e:
-            self.root.after(0, self._load_failed, e)
+            self.root.after(0, self.load_failed, e)
             return
-        self.root.after(0, self._load_done, path, result)
+        self.root.after(0, self.load_done, path, result)
 
-    def _load_failed(self, e):
+    def load_failed(self, e):
         self.hide_loading()
         self.refresh_generate_btn()
         messagebox.showerror("Error reading file", str(e))
@@ -309,7 +309,7 @@ class ReportApp:
         self.update_header()
         shown = len(self.tree.get_children()) if shown is None else shown
         self.status_label.configure(
-            text=f"{shown} of {len(self.all_rows)} shown, {len(self.print_indices())} will be printed.",
+            text=f"{shown} of {len(self.all_rows)} shown, {len(self.selected)} selected for print.",
             text_color="#555555",
         )
         self.refresh_generate_btn()
@@ -322,23 +322,24 @@ class ReportApp:
         """Header checkbox: select ONLY the rows shown; if that's already the selection, clear it."""
         if not self.all_rows:
             return
-        visible = {int(i) for i in self.tree.get_children()}
-        if visible and self.selected == visible:
-            self.selected = set()
-        else:
-            self.selected = visible
+        select = not self.all_visible_selected()
         for iid in self.tree.get_children():
-            self.tree.item(iid, text="☑" if int(iid) in self.selected else "☐")
+            idx = int(iid)
+            if select:
+                self.selected.add(idx)
+            else:
+                self.selected.discard(idx)
+            self.tree.item(iid, text="☑" if select else "☐")
         self.update_selection_status()
 
     def print_indices(self):
         """Rows that will be printed: ticked AND currently shown."""
-        visible = {int(i) for i in self.tree.get_children()}
-        return sorted(self.selected & visible)
+        # visible = {int(i) for i in self.tree.get_children()}
+        # return sorted(self.selected & visible)
+        return sorted(self.selected)
 
     def update_header(self):
-        visible = {int(i) for i in self.tree.get_children()}
-        self.tree.heading("#0", text="☑" if visible and self.selected == visible else "☐")
+        self.tree.heading("#0", text="☑" if self.all_visible_selected() else "☐")
 
     def setup_filters(self):
         """Find the Jabatan / Department columns and fill the dropdowns with their values."""
@@ -370,9 +371,9 @@ class ReportApp:
             return
 
         self.show_loading("Reading file...")
-        threading.Thread(target=self._load_file, args=(path,), daemon=True).start()
+        threading.Thread(target=self.load_file, args=(path,), daemon=True).start()
 
-    def _load_done(self, path, result):
+    def load_done(self, path, result):
         columns, rows, meta = result
 
         self.input_path = path
