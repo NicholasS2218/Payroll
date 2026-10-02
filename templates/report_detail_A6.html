@@ -5,7 +5,7 @@
 <style>
     @page {
         size: A6 landscape;
-        margin: 2mm;
+        margin: 0;
     }
 
     * {
@@ -68,33 +68,30 @@
     .slip td.earn { padding: 0; border-bottom: none; }
     .slip td.sum  { padding: 0; border-top: none; }
 
-    .pair { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .pair { width: 100%; height: 100%; border-collapse: collapse; table-layout: fixed; }
     .pair td { padding: 0.8mm 2mm; }
-    .pair td.label { width: 25%; }
-    .pair td.rp    { width: 5%; }
-    .pair td.num   { width: 20%; text-align: right; font-variant-numeric: tabular-nums; }
-    .pair td.div   { padding-left: 2mm; border-left: 1px solid #000; }
+    .pair td.num { text-align: right; font-variant-numeric: tabular-nums; }
     .pair .section-title {
         text-align: left;
         border-bottom: none;
-        padding: 3mm 2mm 1mm;
+        padding: 4mm 2mm 4mm;
         margin: 0;
         font-weight: normal;
     }
     .pair tr.total td {
         border-bottom: 1px solid #000;
-        padding-top: 3mm;
+        padding-top: 4mm;
         padding-bottom: 1.5mm;
     }
 
     .items { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .items td { padding: 0.8mm 2mm; }
-    .items td.label { width: 25%; }
-    .items td.rp    { width: 5%; }
+    .items td.label { width: 28%; }
+    .items td.rp    { width: 2%;}
     .items td.num   { width: 20%; text-align: right; font-variant-numeric: tabular-nums; }
     .items td.fill  { width: 50%; }
 
-    .items tr:first-child td { padding-top: 3mm; }
+    .items tr:first-child td { padding-top: 4mm; }
     .items tr:nth-last-child(2) td.rp,
     .items tr:nth-last-child(2) td.num { border-bottom: 1px solid #000; }
 
@@ -104,6 +101,27 @@
 </style>
 </head>
 <body>
+    {% macro side(items, tot, title, rows) %}
+    <table class="pair">
+        <colgroup>
+            <col style="width:56%"><col style="width:4%"><col style="width:40%">
+        </colgroup>
+        <tr><td class="section-title" colspan="3">{{ title }}</td></tr>
+        {% for i in range(rows) %}
+        <tr>
+            <td>{{ items[i].label if i < items|length }}&nbsp;</td>
+            <td>{% if i < items|length %}Rp.{% endif %}&nbsp;</td>
+            <td class="num">{% if i < items|length %}{{ items[i].value }}{% endif %}&nbsp;</td>
+        </tr>
+        {% endfor %}
+        <tr class="total">
+            <td>{{ tot.label if tot }}&nbsp;</td>
+            <td>{% if tot %}Rp.{% endif %}&nbsp;</td>
+            <td class="num">{% if tot %}{{ tot.value }}{% endif %}&nbsp;</td>
+        </tr>
+    </table>
+    {% endmacro %}
+
     {% for page in pages %}
     <div class="page">
         {% for r in page %}
@@ -128,39 +146,10 @@
                 {% set dl = r.deductions|rejectattr('total')|list %}
                 {% set et = (r.earnings|selectattr('total')|list)|last %}
                 {% set dt = (r.deductions|selectattr('total')|list)|last %}
+                {% set rows = [el|length, dl|length]|max %}
                 <tr>
-                    <td class="cell earn" colspan="2">
-                        <table class="pair">
-                            <colgroup>
-                                <col style="width:25%"><col style="width:5%"><col style="width:20%">
-                                <col style="width:25%"><col style="width:5%"><col style="width:20%">
-                            </colgroup>
-                            <tr>
-                                <td class="section-title" colspan="3">PENGHASILAN:</td>
-                                <td class="section-title div" colspan="3">PENGURANG:</td>
-                            </tr>
-                            {% for i in range([el|length, dl|length]|max) %}
-                            <tr>
-                                <td class="label">{{ el[i].label if i < el|length }}</td>
-                                <td class="rp">{% if i < el|length %}Rp.{% endif %}</td>
-                                <td class="num">{% if i < el|length %}{{ el[i].value }}{% endif %}</td>
-                                
-                                <td class="label div">{{ dl[i].label if i < dl|length }}</td>
-                                <td class="rp">{% if i < dl|length %}Rp.{% endif %}</td>
-                                <td class="num">{% if i < dl|length %}{{ dl[i].value }}{% endif %}</td>
-                            </tr>
-                            {% endfor %}
-                            <tr class="total">
-                                <td class="label">{{ et.label if et }}</td>
-                                <td class="rp">{% if et %}Rp.{% endif %}</td>
-                                <td class="num">{% if et %}{{ et.value }}{% endif %}</td>
-
-                                <td class="label div">{{ dt.label if dt }}</td>
-                                <td class="rp">{% if dt %}Rp.{% endif %}</td>
-                                <td class="num">{% if dt %}{{ dt.value }}{% endif %}</td>
-                            </tr>
-                        </table>
-                    </td>
+                    <td class="cell earn">{{ side(el, et, "PENGHASILAN:", rows) }}</td>
+                    <td class="cell earn">{{ side(dl, dt, "PENGURANG:", rows) }}</td>
                 </tr>
                 <tr>
                     <td class="cell sum" colspan="2">

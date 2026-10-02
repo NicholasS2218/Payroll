@@ -14,7 +14,11 @@ import traceback
 
 from concurrent.futures.process import BrokenProcessPool
 from tkinter import filedialog, messagebox, ttk
-from generator import generate_pdf_parallel, generate_pdf, preview_data
+
+import tempfile
+from pathlib import Path
+import webbrowser
+from generator import generate_pdf_parallel, generate_pdf, preview_data, generate_html
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -22,11 +26,15 @@ ctk.set_default_color_theme("blue")
 BRAND_COLOR = "#f4640d"
 BRAND_COLOR_HOVER = "#d3560b"
 TEXT_COLOR = "#FFFFFF"
+LAYOUT_LABELS = {
+    "A4 (Portrait)": "A4",
+    "A6 (Landscape)": "A6",
+}
 
 class ReportApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Payroll Report Generator")
+        self.root.title("Payroll Report Generator v.1")
         self.root.geometry("760x560")
         self.root.after(0, lambda: self.root.state("zoomed"))
         self.root.minsize(640, 480)
@@ -109,9 +117,10 @@ class ReportApp:
         self.dept_var = tk.StringVar(value="All")
 
         menu_style = dict(
-            width=200, values=["All"], fg_color=BRAND_COLOR, button_color=BRAND_COLOR_HOVER,
-            button_hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR,
-            command=lambda _: self.on_search_changed(),
+            width = 200, values = ["All"], 
+            fg_color = BRAND_COLOR, button_color = BRAND_COLOR_HOVER,
+            button_hover_color = BRAND_COLOR_HOVER, text_color = TEXT_COLOR,
+            command = lambda _: self.on_search_changed(),
         )
 
         ctk.CTkLabel(filter_row, text="Jabatan:", font=ctk.CTkFont(size=14),
@@ -137,15 +146,15 @@ class ReportApp:
         layout_label = ctk.CTkLabel(layout_row, text="Layout:", font=ctk.CTkFont(size=14), text_color="#555555")
         layout_label.pack(side="left", padx=(0, 8))
 
-        self.layout_var = tk.StringVar(value="A4")
+        self.layout_var = tk.StringVar(value="A4 (Portrait)")
         self.layout_selector = ctk.CTkSegmentedButton(
             layout_row,
-            values=["A4", "A6"],
-            variable=self.layout_var,
-            fg_color="#eeeeee",
-            selected_color=BRAND_COLOR,
-            selected_hover_color=BRAND_COLOR_HOVER,
-            text_color=TEXT_COLOR
+            values                  = list(LAYOUT_LABELS),
+            variable                = self.layout_var,
+            fg_color                = "#eeeeee",
+            selected_color          = BRAND_COLOR,
+            selected_hover_color    = BRAND_COLOR_HOVER,
+            text_color              = TEXT_COLOR
         )
         self.layout_selector.pack(side="left")
         
@@ -157,11 +166,17 @@ class ReportApp:
         self.status_label = ctk.CTkLabel(footer, text="", font=ctk.CTkFont(size=14), text_color="#007700")
         self.status_label.pack(side="left")
 
-        self.generate_btn = ctk.CTkButton(
-            footer, text="Generate Report", width=120, command=self.generate_report, state="disabled",
+        # self.generate_btn = ctk.CTkButton(
+        #     footer, text="Generate Report", width=120, command=self.generate_report, state="disabled",
+        #     fg_color=BRAND_COLOR, hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR
+        # )
+        # self.generate_btn.pack(side="right")
+
+        self.print_btn = ctk.CTkButton(
+            footer, text="Print Payroll", width=120, command=self.preview_print, state="disabled",
             fg_color=BRAND_COLOR, hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR
         )
-        self.generate_btn.pack(side="right")
+        self.print_btn.pack(side="right", padx=(0, 8))
 
         # self.status_label = tk.Label(self.root, text="", font=("Arial", 9), fg="#007700")
         # self.status_label.pack()
@@ -231,7 +246,9 @@ class ReportApp:
         self.update_selection_status()
 
     def refresh_generate_btn(self):
-        self.generate_btn.configure(state="normal" if self.print_indices() else "disabled")
+        state = "normal" if self.print_indices() else "disabled"
+        # self.generate_btn.configure(state=state)
+        self.print_btn.configure(state=state)
 
     def update_selection_status(self, shown=None):
         self.update_header()
@@ -403,7 +420,7 @@ class ReportApp:
         # Run generation in a background thread so the UI doesn't freeze.
         thread = threading.Thread(
             target=self.run_generation, 
-            args=(self.input_path, output_path, self.layout_var.get(), self.print_indices())
+            args=(self.input_path, output_path, LAYOUT_LABELS[self.layout_var.get()], self.print_indices())
         )
         thread.start()
 
@@ -454,6 +471,20 @@ class ReportApp:
             os.system(f'open "{path}"')
         else:
             os.system(f'xdg-open "{path}"')
+
+    def preview_print(self):
+        if not self.input_path or not os.path.isfile(self.input_path):
+            messagebox.showerror("Error", "Please select a valid file first.")
+            return
+        try:
+            html = generate_html(self.input_path, LAYOUT_LABELS[self.layout_var.get()], self.print_indices())
+            fd, path = tempfile.mkstemp(suffix=".html", prefix="slip_")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(html)
+            webbrowser.open(Path(path).as_uri())
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Error", self.describe_error(e))
 
 
 if __name__ == "__main__":

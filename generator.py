@@ -354,6 +354,41 @@ def generate_pdf_parallel(input_path: str, output_path: str, layout: str= DEFAUL
 
     return output_path
 
+PAPER_SIZES = {                 
+    "A4": ("A4 portrait", 210), 
+    "A6": ("A6 landscape", 148),
+}
+
+PRINT_SNIPPET = """
+<style>
+@page { size: __PAPER__; }
+@media screen {
+    body { background: #888; }
+    .page { background: #fff; width: __WIDTH__mm; margin: 10px auto; }
+}
+</style>
+<script>
+window.addEventListener('load', () => setTimeout(() => window.print(), 300));
+</script>
+"""
+
+def generate_html(input_path: str, layout: str = DEFAULT_LAYOUT, only=None) -> str:
+    """Render the slips as one HTML page that opens the print dialog when loaded."""
+    if layout not in LAYOUTS:
+        raise ValueError(f"Unknown layout: {layout}. Choose from {list(LAYOUTS)}.")
+    config = LAYOUTS[layout]
+
+    headers, body, meta = read_table(input_path)
+    pages = build_pages(body, headers, meta, config["page_size"], only)
+    if not pages:
+        raise ValueError("No records found to print.")
+
+    paper, width = PAPER_SIZES.get(layout, PAPER_SIZES[DEFAULT_LAYOUT])
+    snippet = PRINT_SNIPPET.replace("__PAPER__", paper).replace("__WIDTH__", str(width))
+
+    html = render_html(pages, config["template"], meta)
+    return html.replace("</body>", snippet + "</body>")
+
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
