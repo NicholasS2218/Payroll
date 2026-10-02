@@ -11,6 +11,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 import customtkinter as ctk
 import traceback
+import shutil
 
 from concurrent.futures.process import BrokenProcessPool
 from tkinter import filedialog, messagebox, ttk
@@ -18,7 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 import tempfile
 from pathlib import Path
 import webbrowser
-from generator import generate_pdf_parallel, generate_pdf, preview_data, generate_html
+from generator import generate_pdf_parallel, generate_pdf, preview_data, generate_html, TEMPLATE_DIR
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -26,6 +27,10 @@ ctk.set_default_color_theme("blue")
 BRAND_COLOR = "#f4640d"
 BRAND_COLOR_HOVER = "#d3560b"
 TEXT_COLOR = "#FFFFFF"
+LOADING_THRESHOLD = 500 
+
+TEMPLATE_FILE = "template.xlsx"
+
 LAYOUT_LABELS = {
     "A4 (Portrait)": "A4",
     "A6 (Landscape)": "A6",
@@ -34,7 +39,7 @@ LAYOUT_LABELS = {
 class ReportApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Payroll Report Generator v.1")
+        self.root.title("Payroll Report Generator v.1.0")
         self.root.geometry("760x560")
         self.root.after(0, lambda: self.root.state("zoomed"))
         self.root.minsize(640, 480)
@@ -47,6 +52,9 @@ class ReportApp:
         self.selected = set()
         self.jabatan_idx = None
         self.dept_idx = None
+
+        self._insert_job = None
+        self._search_job = None
 
         self.build_ui()
 
@@ -86,6 +94,12 @@ class ReportApp:
         self.file_label = ctk.CTkLabel(file_row, text="No file selected", font=ctk.CTkFont(size=14), text_color="#555555")
         self.file_label.pack(side="left", padx=(12,0))
 
+        self.template_btn = ctk.CTkButton(
+            file_row, text="Download Template", width=140, command=self.download_template,
+            fg_color=BRAND_COLOR, hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR
+        )
+        self.template_btn.pack(side="right")
+
         # search bar
         search_row = ctk.CTkFrame(container, fg_color="transparent")
         search_row.grid(row=2, column=0, sticky="ew", padx=24, pady=(4, 0))
@@ -103,7 +117,7 @@ class ReportApp:
         search_subtitle.pack(fill="x", pady=(2, 0))
 
         self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", self.on_search_changed)
+        self.search_var.trace_add("write", self.on_search_typed)
 
         self.search_entry = ctk.CTkEntry(
             search_row, placeholder_text="Search by name...", textvariable=self.search_var,
@@ -139,6 +153,13 @@ class ReportApp:
         # table_frame.pack(fill="both", expand=True, padx=24, pady=(12, 8))
 
         self.build_table(table_frame)
+        self.loading_frame = ctk.CTkFrame(table_frame, fg_color="#ffffff")
+        self.loading_label = ctk.CTkLabel(self.loading_frame, text="Loading...",
+                                          font=ctk.CTkFont(size=16), text_color="#555555")
+        self.loading_label.place(relx=0.5, rely=0.45, anchor="center")
+        self.loading_bar = ctk.CTkProgressBar(self.loading_frame, width=320, mode="indeterminate",
+                                              progress_color=BRAND_COLOR)
+        self.loading_bar.place(relx=0.5, rely=0.55, anchor="center")
 
         layout_row = ctk.CTkFrame(container, fg_color="transparent")
         layout_row.grid(row=4, column=0, sticky="ew", padx=24, pady=(8, 4))
@@ -210,6 +231,40 @@ class ReportApp:
         tree_container.grid_columnconfigure(0, weight=1)
 
         self.set_placeholder()
+
+    def show_loading(self, text="Loading..."):
+        self.loading_label.configure(text=text)
+        self.loading_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.loading_frame.lift()
+        self.loading_bar.start()
+        self.select_btn.configure(state="disabled")
+        self.print_btn.configure(state="disabled")
+        self.root.update_idletasks()
+
+    def hide_loading(self):
+        self.loading_bar.stop()
+        self.loading_frame.place_forget()
+        self.select_btn.configure(state="normal")
+
+    def on_search_typed(self, *args):
+        """Debounce: wait 250 ms after the last keystroke before filtering."""
+        if self._search_job:
+            self.root.after_cancel(self._search_job)
+        self._search_job = self.root.after(250, self.on_search_changed)
+
+    def _load_file(self, path):
+        """Runs in a background thread: only reads the file, never touches the UI."""
+        try:
+            result = preview_data(path)
+        except Exception as e:
+            self.root.after(0, self._load_failed, e)
+            return
+        self.root.after(0, self._load_done, path, result)
+
+    def _load_failed(self, e):
+        self.hide_loading()
+        self.refresh_generate_btn()
+        messagebox.showerror("Error reading file", str(e))
 
     def on_tree_click(self, event):
         if not self.all_rows:
@@ -311,15 +366,14 @@ class ReportApp:
             title="Select CSV or Excel file",
             filetypes=[("Spreadsheet files", "*.csv *.xlsx *.xls"), ("All files", "*.*")],
         )
-
         if not path:
             return
 
-        try:
-            columns, rows, meta = preview_data(path)
-        except Exception as e:
-            messagebox.showerror("Error reading file", str(e))
-            return
+        self.show_loading("Reading file...")
+        threading.Thread(target=self._load_file, args=(path,), daemon=True).start()
+
+    def _load_done(self, path, result):
+        columns, rows, meta = result
 
         self.input_path = path
         self.file_label.configure(text=os.path.basename(path))
@@ -332,18 +386,44 @@ class ReportApp:
         self.all_rows = rows
 
         self.setup_filters()
-        self.search_var.set("") 
+        self.search_var.set("")
+        if self._search_job:                      # clearing the search must not trigger a second rebuild
+            self.root.after_cancel(self._search_job)
+            self._search_job = None
 
         self.selected = set(range(len(rows)))     # everything selected by default
-        self.populate_table(columns, rows, list(range(len(rows))))
-        self.update_selection_status()
-        
-        # if path:
-        #     self.input_path.set(path)
-        #     self.generate_btn.config(state=tk.NORMAL)
-        #     self.status_label.config(text="")
+        self.populate_table(columns, rows, list(range(len(rows))),
+                            on_done=self.update_selection_status)
+   
+    def download_template(self):
+        src = os.path.join(TEMPLATE_DIR, TEMPLATE_FILE)
+        if not os.path.isfile(src):
+            messagebox.showerror("Template not found", f"The template file is missing:\n{src}")
+            return
+
+        dest = filedialog.asksaveasfilename(
+            title="Save template as",
+            defaultextension=".xlsx",
+            initialfile=TEMPLATE_FILE,
+            filetypes=[("Excel files", "*.xlsx")],
+        )
+        if not dest:
+            return
+
+        try:
+            shutil.copyfile(src, dest)
+        except PermissionError:
+            messagebox.showerror("Cannot save", "That file is open in another program. Close it or choose a different name.")
+            return
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+            return
+
+        if messagebox.askyesno("Template saved", f"Saved to:\n{dest}\n\nOpen it now?"):
+            self.open_file(dest)
 
     def on_search_changed(self, *args):
+        self._search_job = None
         if not self.all_rows:
             return
 
@@ -362,10 +442,19 @@ class ReportApp:
 
         pairs = [(i, row) for i, row in enumerate(self.all_rows) if matches(row)]
 
-        self.populate_table(self.all_columns, [r for _, r in pairs], [i for i, _ in pairs])
-        self.update_selection_status(shown=len(pairs))
+        self.populate_table(self.all_columns, [r for _, r in pairs], [i for i, _ in pairs],
+                            on_done=lambda: self.update_selection_status(shown=len(pairs)))
 
-    def populate_table(self, columns, rows, indices):
+    def populate_table(self, columns, rows, indices, on_done=None):
+        # stop any insert still running from a previous search/filter
+        if self._insert_job:
+            self.root.after_cancel(self._insert_job)
+            self._insert_job = None
+
+        items = list(zip(indices, rows))
+        if len(items) > LOADING_THRESHOLD:
+            self.show_loading(f"Loading rows... 0/{len(items)}")
+
         self.tree.delete(*self.tree.get_children())
         self.tree["columns"] = columns
 
@@ -377,19 +466,31 @@ class ReportApp:
 
         for i, col in enumerate(columns):
             self.tree.heading(col, text=col)
-            # width = longest of header or any value in that column, plus padding
-            content_width = max(
-                [header_font.measure(col)] + [font.measure(str(row[i])) for row in rows],
-                default=80,
-            )
+            # measure only the longest value per column instead of every cell
+            longest = max((str(r[i]) for r in rows), key=len, default="")
+            content_width = max(header_font.measure(col), font.measure(longest))
             anchor = "w" if i == 0 else "center"
             w = content_width + 24
             self.tree.column(col, anchor=anchor, width=w, minwidth=w, stretch=False)
 
-        for idx, row in zip(indices, rows):
-            mark = "☑" if idx in self.selected else "☐"
-            self.tree.insert("", "end", iid=str(idx), text=mark, values=row)
+        CHUNK = 300
 
+        def step(start=0):
+            for idx, row in items[start:start + CHUNK]:
+                mark = "☑" if idx in self.selected else "☐"
+                self.tree.insert("", "end", iid=str(idx), text=mark, values=row)
+            nxt = start + CHUNK
+            if nxt < len(items):
+                self.loading_label.configure(text=f"Loading rows... {nxt}/{len(items)}")
+                self._insert_job = self.root.after(1, step, nxt)
+            else:
+                self._insert_job = None
+                self.hide_loading()
+                if on_done:
+                    on_done()
+
+        step()
+    
     def generate_report(self):
         if not self.input_path or not os.path.isfile(self.input_path):
             messagebox.showerror("Error", "Please select a valid file first.")
@@ -412,7 +513,7 @@ class ReportApp:
             messagebox.showerror("Cannot save", "That file is open in another program. Close it or choose a different name.")
             return
 
-        self.generate_btn.configure(state="disabled")
+        # self.generate_btn.configure(state="disabled")
         self.select_btn.configure(state="disabled")
         self.status_label.configure(text="Generating report...", text_color="#555555")
         # self.root.update_idletasks()
