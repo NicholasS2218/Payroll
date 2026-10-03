@@ -370,8 +370,27 @@ class ReportApp:
         if not path:
             return
 
+        self.clear_table()
         self.show_loading("Reading file...")
         threading.Thread(target=self.load_file, args=(path,), daemon=True).start()
+
+    def clear_table(self):
+        if self._insert_job:
+            self.root.after_cancel(self._insert_job)
+            self._insert_job = None
+        if self._search_job:
+            self.root.after_cancel(self._search_job)
+            self._search_job = None
+
+        self.all_rows = []
+        self.all_columns = []
+        self.selected = set()
+        self.input_path = None
+
+        self.file_label.configure(text="No file selected")
+        self.meta_label.configure(text="")
+        self.status_label.configure(text="")
+        self.set_placeholder()
 
     def load_done(self, path, result):
         columns, rows, meta = result
