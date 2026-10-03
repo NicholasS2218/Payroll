@@ -184,8 +184,8 @@ def build_rows(row, headers, idxs): # , negative_after=None):
             continue
         value = parse_currency_value(row[i])
         is_total = label.lower().startswith("total")
-        if value == 0 and not is_total:
-            continue
+        # if value == 0 and not is_total:
+        #     continue
         out.append({
             "label": field_label(label),
             "value": fmt(value),
