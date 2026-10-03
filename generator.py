@@ -5,25 +5,13 @@ import sys
 import pandas as pd
 import tempfile 
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
 from datetime import datetime
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from pypdf import PdfWriter
-
-def render_chunk(pages_chunk, meta, template_dir, template_name, out_path):
-    env = Environment(loader=FileSystemLoader(template_dir))
-    template = env.get_template(template_name)
-    html_string = template.render(pages=pages_chunk, **meta)
-    HTML(string=html_string, base_url=template_dir).write_pdf(out_path)
-    return out_path
 
 BULAN = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
 
 LAYOUTS = {
-    # "PORTRAIT 2x2": {"template": "report_2x2.html", "page_size": 4},
-    # "LANDSCAPE 3x2": {"template": "report_3x2.html", "page_size": 6},
     "A4": {"template": "report_detail.html", "page_size": 2},
-    "A6": {"template": "report_detail_A6.html", "page_size": 1},
+    # "A6": {"template": "report_detail_A6.html", "page_size": 1},
 }
 DEFAULT_LAYOUT = "A4"
 
@@ -228,15 +216,20 @@ def normalize_record(row: pd.Series, headers: list, sections: dict, meta: dict) 
         "negative": False,
     })
 
+    # every column before "Gaji" is an info field, in file order
+    info_items = [
+        {"label": headers[i],
+         "value": "" if pd.isna(row[i]) else str(row[i]).strip()}
+        for i in range(sections["earn"][0]) if headers[i]
+    ]
+    half = (len(info_items) + 2) // 2
+    info_left = info_items[:half]
+    info_right = [{"label": "Bulan", "value": meta["bulan"]}] + info_items[half:]
+
     return {
         "nama": info("nama") or "Unknown",
-        "no_nik": info("no nik"),
-        "jabatan": info("jabatan"),
-        "department": info("department"),
-        "status": info("status"),
-        "bank": info("bank"),
-        "no_rekening": info("no rekening"),
-        "bulan": meta["bulan"],
+        "info_left": info_left,
+        "info_right": info_right,
         "earnings": build_rows(row, headers, sections["earn"]),
         "deductions": build_rows(row, headers, sections["deduct"]),
         "summary": summary,
@@ -251,9 +244,19 @@ def preview_data(input_path: str):
     last = len(headers) - 1
     idxs = [i for i in range(len(headers)) if headers[i] or i == last]
 
+    # names that exist in both the earnings and deductions sections
+    earn_names = {field_label(headers[i]).lower() for i in sections["earn"] if headers[i]}
+    deduct_names = {field_label(headers[i]).lower() for i in sections["deduct"] if headers[i]}
+    both = earn_names & deduct_names
+
     seen, columns = {}, []
     for i in idxs:
         label = field_label(headers[i] or "Total")
+        if label.lower() in both:
+            if i in sections["earn"]:
+                label += " (+)"
+            elif i in sections["deduct"]:
+                label += " (-)"
         seen[label] = seen.get(label, 0) + 1
         columns.append(label if seen[label] == 1 else f"{label} ({seen[label]})")
 
@@ -287,72 +290,6 @@ def render_html(pages: list, template_name: str, meta: dict) -> str:
     # field_defs = [{"key": f, "label": field_label(f)} for f in fields]
 
     return template.render(pages=pages, **meta)
-
-"""Full pipeline: read file -> normalize -> render -> save PDF."""
-def generate_pdf(input_path: str, output_path: str, layout: str = DEFAULT_LAYOUT) -> str:
-    if layout not in LAYOUTS:
-        raise ValueError(f"Unknown layout: {layout}. Choose from {list(LAYOUTS)}.")
-
-    config = LAYOUTS[layout]
-    template_name = config["template"]
-    page_size = config["page_size"]
-
-    headers, body, meta = read_table(input_path)
-    pages = build_pages(body, headers, meta, page_size)
-    html_string = render_html(pages, template_name, meta)
-    HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
-    return output_path
-
-def generate_pdf_parallel(input_path: str, output_path: str, layout: str= DEFAULT_LAYOUT,
-                           workers= None,  progress_callback= None, only= None) -> str:
-
-    if layout not in LAYOUTS:
-        raise ValueError(f"Unknown layout: {layout}. Choose from {list(LAYOUTS)}.")
-    config = LAYOUTS[layout]
-    template_name = config["template"]
-    page_size = config["page_size"]
-
-    headers, body, meta = read_table(input_path)
-    pages = build_pages(body, headers, meta, page_size, only)
-    if not pages:
-        raise ValueError("No records found to generate.")
-
-    workers = workers or min(os.cpu_count() or 1, len(pages))
-
-    # not worth the process-spawn overhead for a handful of pages
-    if workers <= 1 or len(pages) < workers * 2:
-        html_string = render_html(pages, template_name, meta)
-        HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf(output_path)
-        return output_path
-
-    target_chunks = min(len(pages), workers * 4)
-    chunk_size = max(1, math.ceil(len(pages) / target_chunks))
-    chunks = [pages[i:i + chunk_size] for i in range(0, len(pages), chunk_size)]
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        chunk_paths = [os.path.join(tmpdir, f"chunk_{i}.pdf") for i in range(len(chunks))]
-
-        with ProcessPoolExecutor(max_workers=workers) as executor:
-            to_index = {
-                executor.submit(render_chunk, chunk, meta, TEMPLATE_DIR, template_name, path): i
-                for i, (chunk, path) in enumerate(zip(chunks, chunk_paths))
-            }
-            done_count = 0
-            total = len(to_index)
-            for t in as_completed(to_index):
-                t.result()  # raises here if that chunk's render failed
-                done_count += 1
-                if progress_callback:
-                    percent = int((done_count / total) * 100)
-                    progress_callback(percent)
-
-        merger = PdfWriter()
-        for path in chunk_paths:
-            merger.append(path)
-        merger.write(output_path)
-        merger.close()
-
-    return output_path
 
 PAPER_SIZES = {                 
     "A4": ("A4 portrait", 210), 

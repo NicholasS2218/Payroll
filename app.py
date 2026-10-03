@@ -6,6 +6,7 @@ except ImportError:
 
 import os
 import sys
+import time
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
@@ -13,13 +14,12 @@ import customtkinter as ctk
 import traceback
 import shutil
 
-from concurrent.futures.process import BrokenProcessPool
 from tkinter import filedialog, messagebox, ttk
 
 import tempfile
 from pathlib import Path
 import webbrowser
-from generator import generate_pdf_parallel, generate_pdf, preview_data, generate_html, TEMPLATE_DIR
+from generator import preview_data, generate_html, TEMPLATE_DIR
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -33,8 +33,17 @@ TEMPLATE_FILE = "template.xlsx"
 
 LAYOUT_LABELS = {
     "A4 (Portrait)": "A4",
-    "A6 (Landscape)": "A6",
+    # "A6 (Landscape)": "A6",
 }
+
+def cleanup_temp_previews(min_age_seconds=0):
+    now = time.time()
+    for f in Path(tempfile.gettempdir()).glob("slip_*.html"):
+        try:
+            if now - f.stat().st_mtime >= min_age_seconds:
+                f.unlink()
+        except OSError:
+            pass
 
 class ReportApp:
     def __init__(self, root):
@@ -56,6 +65,8 @@ class ReportApp:
         self._insert_job = None
         self._search_job = None
 
+        cleanup_temp_previews(min_age_seconds=60)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.build_ui()
 
     def build_ui(self):
@@ -187,12 +198,6 @@ class ReportApp:
         self.status_label = ctk.CTkLabel(footer, text="", font=ctk.CTkFont(size=14), text_color="#007700")
         self.status_label.pack(side="left")
 
-        # self.generate_btn = ctk.CTkButton(
-        #     footer, text="Generate Report", width=120, command=self.generate_report, state="disabled",
-        #     fg_color=BRAND_COLOR, hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR
-        # )
-        # self.generate_btn.pack(side="right")
-
         self.print_btn = ctk.CTkButton(
             footer, text="Print Payroll", width=120, command=self.preview_print, state="disabled",
             fg_color=BRAND_COLOR, hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR
@@ -302,7 +307,6 @@ class ReportApp:
 
     def refresh_generate_btn(self):
         state = "normal" if self.print_indices() else "disabled"
-        # self.generate_btn.configure(state=state)
         self.print_btn.configure(state=state)
 
     def update_selection_status(self, shown=None):
@@ -511,65 +515,6 @@ class ReportApp:
 
         step()
     
-    def generate_report(self):
-        if not self.input_path or not os.path.isfile(self.input_path):
-            messagebox.showerror("Error", "Please select a valid file first.")
-            return
-
-        default_name = os.path.splitext(os.path.basename(self.input_path))[0] + "_report.pdf"
-        output_path = filedialog.asksaveasfilename(
-            title="Save report as",
-            defaultextension=".pdf",
-            initialfile=default_name,
-            filetypes=[("PDF files", "*.pdf")],
-        )
-        if not output_path:
-            return
-
-        try:
-            with open(output_path, "ab"):
-                pass
-        except PermissionError:
-            messagebox.showerror("Cannot save", "That file is open in another program. Close it or choose a different name.")
-            return
-
-        # self.generate_btn.configure(state="disabled")
-        self.select_btn.configure(state="disabled")
-        self.status_label.configure(text="Generating report...", text_color="#555555")
-        # self.root.update_idletasks()
-
-        # Run generation in a background thread so the UI doesn't freeze.
-        thread = threading.Thread(
-            target=self.run_generation, 
-            args=(self.input_path, output_path, LAYOUT_LABELS[self.layout_var.get()], self.print_indices())
-        )
-        thread.start()
-
-    def run_generation(self, input_path, output_path, layout, only):
-        try:
-            def on_progress(percent):
-                self.root.after(0, lambda: self.status_label.configure(
-                    text=f"Generating... {percent}%", text_color="#555555"
-                ))
-            generate_pdf_parallel(input_path, output_path, layout=layout, progress_callback=on_progress, only=only)
-            self.root.after(0, self.on_success, output_path)
-        except Exception as e:
-            traceback.print_exc()
-            self.root.after(0, self.on_error, self.describe_error(e))
-
-    def on_success(self, output_path):
-        self.status_label.configure(text="Report generated successfully!", text_color="#007700")
-        self.refresh_generate_btn()
-        self.select_btn.configure(state="normal")
-        if messagebox.askyesno("Success", f"Report saved to:\n{output_path}\n\nOpen it now?"):
-            self.open_file(output_path)
-
-    def on_error(self, error_message):
-        self.status_label.configure(text="Failed to generate report.", text_color="#cc0000")
-        self.refresh_generate_btn()
-        self.select_btn.configure(state="normal")
-        messagebox.showerror("Error", f"Something went wrong:\n\n{error_message}")
-
     def describe_error(self, e: Exception) -> str:
         if isinstance(e, PermissionError):
             return ("Cannot write to the output file.\n\n"
@@ -578,9 +523,6 @@ class ReportApp:
                     f"then try again.\n\nDetails: {e}")
         if isinstance(e, FileNotFoundError):
             return f"A file or folder could not be found.\n\nDetails: {e}"
-        if isinstance(e, BrokenProcessPool):
-            return ("A background worker crashed while rendering. "
-                    "Try again, or check that the template files are present.")
         if isinstance(e, ValueError):
             return str(e)  # your own messages, e.g. missing column
         return f"{type(e).__name__}: {e}"
@@ -607,6 +549,9 @@ class ReportApp:
             traceback.print_exc()
             messagebox.showerror("Error", self.describe_error(e))
 
+    def on_close(self):
+        cleanup_temp_previews()
+        self.root.destroy()
 
 if __name__ == "__main__":
     import multiprocessing

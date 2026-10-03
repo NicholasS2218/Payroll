@@ -145,16 +145,14 @@
             <table class="slip">
                 <tr>
                     <td class="cell info">
-                        <div><b>Nama</b>: {{ r.nama }}</div>
-                        <div><b>No NIK</b>: {{ r.no_nik }}</div>
-                        <div><b>Jabatan</b>: {{ r.jabatan }}</div>
-                        <div><b>Department</b>: {{ r.department }}</div>
+                        {% for it in r.info_left %}
+                        <div><b>{{ it.label }}</b>: {{ it.value }}</div>
+                        {% endfor %}
                     </td>
                     <td class="cell info">
-                        <div><b>Bulan</b>: {{ r.bulan }}</div>
-                        <div><b>Status</b>: {{ r.status }}</div>
-                        <div><b>Bank</b>: {{ r.bank }}</div>
-                        <div><b>No Rekening</b>: {{ r.no_rekening }}</div>
+                        {% for it in r.info_right %}
+                        <div><b>{{ it.label }}</b>: {{ it.value }}</div>
+                        {% endfor %}
                     </td>
                 </tr>
                 {% set el = r.earnings|rejectattr('total')|list %}
