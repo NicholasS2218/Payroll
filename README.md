@@ -6,13 +6,9 @@ Generates an A4 PDF payroll report (4 records per page, 2x2 card layout) from a 
 
 ## For Users (just running the app)
 
-1. Install the **GTK3 runtime** (required once, needed by the PDF engine):
-   https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases
-   - Download the latest `gtk3-runtime-x.x.x-x-x-ts-win64.exe`
-   - Run it, keep default options, finish install
-2. Run `app.exe`
-3. Click **Select File** → choose your CSV/Excel file
-4. Click **Generate Report** → choose where to save → PDF opens automatically
+1. Run `Payroll/payroll.exe`
+2. Click **Select File** → choose your CSV/Excel file
+3. Click **Generate Report** → choose where to save → PDF opens automatically
 
 No Python, no internet connection, and no other installs needed.
 
@@ -50,10 +46,10 @@ hiddenimports=['weasyprint', 'PIL._tkinter_finder'],
 ```bash
 pyinstaller app.spec
 ```
-Output will be at `dist/app`.
+Output will be at `dist/payroll`.
 
 ### 6. Test before sharing
-Run `dist/app/app.exe` directly (not from the VSCode terminal/venv) to confirm it works standalone. Ideally test on a machine other than your dev machine.
+Run `dist/Payroll/payroll.exe` directly (not from the VSCode terminal/venv) to confirm it works standalone. Ideally test on a machine other than your dev machine.
 
 ---
 
