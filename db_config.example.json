@@ -1,0 +1,26 @@
+{
+  "companies": {
+    "Company A": "MAIN",
+    "Company B": "SECOND"
+  },
+  "connections": {
+    "MAIN": {
+      "driver": "mysql+pyodbc",
+      "odbc_driver": "ODBC Driver 17 for SQL Server",
+      "host": "localhost",
+      "port": 3306,
+      "database": "payroll",
+      "user": "your_user",
+      "password": "your_password"
+    },
+    "SECOND": {
+      "driver": "mysql+pyodbc",
+      "odbc_driver": "ODBC Driver 17 for SQL Server",
+      "host": "localhost",
+      "port": 3306,
+      "database": "payroll_2",
+      "user": "your_user",
+      "password": "your_password"
+    },
+  }
+}

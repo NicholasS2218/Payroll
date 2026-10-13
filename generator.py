@@ -4,6 +4,7 @@ import math
 import sys
 import pandas as pd
 import tempfile 
+from openpyxl import load_workbook
 from jinja2 import Environment, FileSystemLoader
 from datetime import datetime
 
@@ -22,6 +23,25 @@ def get_base_path():
 
 TEMPLATE_DIR = os.path.join(get_base_path(), "templates")
 
+def build_template(src, dest, company, bulan, headers, records):    # ADD
+    wb = load_workbook(src)
+    ws = wb.active
+    ws["C1"] = company
+    ws["C2"] = bulan
+
+    header_row, first_row = 4, 5
+    cols = {str(c.value).strip().lower(): c.column for c in ws[header_row] if c.value}
+    no_col = cols.get("no.") or cols.get("no")
+
+    for n, rec in enumerate(records):
+        r = first_row + n
+        if no_col:
+            ws.cell(row=r, column=no_col, value=n + 1)
+        for h, v in zip(headers, rec):
+            if h.lower() in cols:
+                ws.cell(row=r, column=cols[h.lower()], value=v)
+
+    wb.save(dest)
 
 def read_table(file_path: str):
     ext = os.path.splitext(file_path)[1].lower()

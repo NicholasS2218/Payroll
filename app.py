@@ -7,6 +7,10 @@ except ImportError:
 import os
 import sys
 import time
+
+from datetime import datetime
+from db import dispose_all, fetch_distinct, fetch_employees, EMPLOYEE_FIELDS, load_companies
+
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
@@ -19,7 +23,7 @@ from tkinter import filedialog, messagebox, ttk
 import tempfile
 from pathlib import Path
 import webbrowser
-from generator import preview_data, generate_html, TEMPLATE_DIR
+from generator import preview_data, generate_html, build_template, TEMPLATE_DIR
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -29,12 +33,24 @@ BRAND_COLOR_HOVER = "#d3560b"
 TEXT_COLOR = "#FFFFFF"
 LOADING_THRESHOLD = 500 
 
-TEMPLATE_FILE = "template.xlsx"
+TEMPLATE_FILE = "payroll_template.xlsx"
 
 LAYOUT_LABELS = {
     "A4 (Portrait)": "A4",
     # "A6 (Landscape)": "A6",
 }
+
+COMPANIES = {} 
+FILTER_ORDER = ["branch", "department", "jabatan", "group"]
+FILTER_LABELS = {
+    "branch": "Branch", 
+    "department": "Department",
+    "jabatan": "Jabatan", 
+    "group": "Grup"
+}
+
+MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+YEARS = [str(datetime.now().year - i) for i in range(3)]
 
 def cleanup_temp_previews(min_age_seconds=0):
     now = time.time()
@@ -68,16 +84,29 @@ class ReportApp:
 
         cleanup_temp_previews(min_age_seconds=60)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        try:
+            COMPANIES.update(load_companies())
+        except Exception as e:
+            messagebox.showerror("Configuration error", self.describe_error(e))
+            sys.exit(1)
         self.build_ui()
 
     def build_ui(self):
-        container = self.root
-        container.grid_rowconfigure(3, weight=1)  # table row expands to fill remaining space
+        # container = self.root
+        # container.grid_rowconfigure(3, weight=1) 
+        # container.grid_columnconfigure(0, weight=1)
+
+        # footer is packed first so it stays pinned to the bottom, outside the scroll area
+        self.footer_holder = ctk.CTkFrame(self.root, fg_color="transparent")
+        self.footer_holder.pack(side="bottom", fill="x")
+
+        container = ctk.CTkScrollableFrame(self.root, fg_color="transparent")
+        container.pack(side="top", fill="both", expand=True)
         container.grid_columnconfigure(0, weight=1)
 
         # header
         header = ctk.CTkFrame(container, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=24, pady=(24, 8))
+        header.grid(row=0, column=0, sticky="ew", padx=24, pady=(24, 4))
         # header.pack(fill="x", padx=24, pady=(24, 8))
         # pad = {"padx": 20, "pady": 10}
 
@@ -93,9 +122,71 @@ class ReportApp:
         )
         subtitle.pack()
 
+        # --- generate template from database ---
+        gen = ctk.CTkFrame(header)
+        gen.pack(fill="x", pady=(12, 0))
+
+        ctk.CTkLabel(gen, text="STEP 1. Generate Template from Database",
+                     font=ctk.CTkFont(size=14, weight="bold"), text_color="#333333"
+                     ).grid(row=0, column=0, columnspan=5, sticky="w", padx=12, pady=(8, 2))
+
+        menu_kw = dict(width=170, fg_color=BRAND_COLOR, button_color=BRAND_COLOR_HOVER,
+                       button_hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR)
+        label_kw = dict(font=ctk.CTkFont(size=13), text_color="#555555")
+
+        now = datetime.now()
+        self.db_company_var = tk.StringVar(value=list(COMPANIES)[0])
+        self.db_month_var = tk.StringVar(value=MONTHS[now.month - 1])
+        self.db_year_var = tk.StringVar(value=YEARS[0])
+        self.db_vars, self.db_menus = {}, {}
+
+        # row 1: Company (spans 2 columns), Month, Year
+        company_kw = {**menu_kw, "width": 364}      # 2 x 170 + 2 x 12 padding = exactly 2 columns wide
+
+        ctk.CTkLabel(gen, text="Company", **label_kw).grid(row=1, column=0, columnspan=2, sticky="w", padx=12)
+        ctk.CTkOptionMenu(gen, variable=self.db_company_var, values=list(COMPANIES),
+            command=lambda _: self.reload_db_filters(0), **company_kw
+            ).grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
+
+        ctk.CTkLabel(gen, text="Month", **label_kw).grid(row=1, column=2, sticky="w", padx=12)
+        ctk.CTkOptionMenu(gen, variable=self.db_month_var, values=MONTHS, **menu_kw
+            ).grid(row=2, column=2, sticky="w", padx=12, pady=(0, 10))
+
+        ctk.CTkLabel(gen, text="Year", **label_kw).grid(row=1, column=3, sticky="w", padx=12)
+        ctk.CTkOptionMenu(gen, variable=self.db_year_var, values=YEARS, **menu_kw
+            ).grid(row=2, column=3, sticky="w", padx=12, pady=(0, 10))
+
+        # row 2: Branch, Department, Jabatan, Grup (labels on grid row 3, dropdowns on grid row 4)
+        for n, key in enumerate(FILTER_ORDER):
+            var = tk.StringVar(value="All")
+            ctk.CTkLabel(gen, text=FILTER_LABELS[key], **label_kw
+                ).grid(row=3, column=n, sticky="w", padx=12)
+            
+            menu = ctk.CTkOptionMenu(gen, variable=var, values=["All"], state="disabled",
+                command=lambda _, k=key: self.on_db_filter_changed(k),
+                **menu_kw)
+            
+            menu.grid(row=4, column=n, sticky="w", padx=12, pady=(0, 10))
+            self.db_vars[key], self.db_menus[key] = var, menu
+
+        self.gen_btn = ctk.CTkButton(
+            gen, text="Generate Template", width=150, command=self.generate_template,
+            fg_color=BRAND_COLOR, hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR
+        )
+        self.gen_btn.grid(row=4, column=4, padx=12, pady=(0, 10), sticky="e")
+        gen.grid_columnconfigure(4, weight=1)
+
+        self.gen_status = ctk.CTkLabel(gen, text="", font=ctk.CTkFont(size=12), text_color="#555555")
+        self.gen_status.grid(row=5, column=0, columnspan=5, sticky="w", padx=12, pady=(0, 6))
+
+        self.root.after(100, self.reload_db_filters)     # fill the dropdowns on startup
+
+        ctk.CTkLabel(header, text="STEP 2. Select the Excel file to preview and print",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color="#333333", anchor="w"
+            ).pack(fill="x", padx=0, pady=(20, 0))
+        
         file_row = ctk.CTkFrame(container, fg_color="transparent")
-        file_row.grid(row=1, column=0, sticky="ew", padx=24, pady=(8, 4))
-        # file_row.pack(fill="x", padx=24, pady=(8, 4))
+        file_row.grid(row=1, column=0, sticky="ew", padx=24, pady=(2, 4))
 
         self.select_btn = ctk.CTkButton(
             file_row, text="Select File", width=120, command=self.select_file, 
@@ -106,11 +197,11 @@ class ReportApp:
         self.file_label = ctk.CTkLabel(file_row, text="No file selected", font=ctk.CTkFont(size=14), text_color="#555555")
         self.file_label.pack(side="left", padx=(12,0))
 
-        self.template_btn = ctk.CTkButton(
-            file_row, text="Download Template", width=140, command=self.download_template,
-            fg_color=BRAND_COLOR, hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR
-        )
-        self.template_btn.pack(side="right")
+        # self.template_btn = ctk.CTkButton(
+        #     file_row, text="Download Template", width=140, command=self.download_template,
+        #     fg_color=BRAND_COLOR, hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR
+        # )
+        # self.template_btn.pack(side="right")
 
         # search bar
         search_row = ctk.CTkFrame(container, fg_color="transparent")
@@ -160,9 +251,9 @@ class ReportApp:
         self.dept_menu.pack(side="left", padx=(6, 0))
 
         # preview table
-        table_frame = ctk.CTkFrame(container)
+        table_frame = ctk.CTkFrame(container, height= 420)
+        table_frame.pack_propagate(False)
         table_frame.grid(row=3, column=0, sticky="nsew", padx=24, pady=(12, 8))
-        # table_frame.pack(fill="both", expand=True, padx=24, pady=(12, 8))
 
         self.build_table(table_frame)
         self.loading_frame = ctk.CTkFrame(table_frame, fg_color="#ffffff")
@@ -192,9 +283,8 @@ class ReportApp:
         self.layout_selector.pack(side="left")
         
         # status + generate
-        footer = ctk.CTkFrame(container, fg_color="transparent")
-        footer.grid(row=5, column=0, sticky="ew", padx=24, pady=(4, 24))
-        # footer.pack(fill="x", padx=24, pady=(4, 24))
+        footer = ctk.CTkFrame(self.footer_holder, fg_color="transparent")
+        footer.pack(fill="x", padx=24, pady=(4, 16))
 
         self.status_label = ctk.CTkLabel(footer, text="", font=ctk.CTkFont(size=14), text_color="#007700")
         self.status_label.pack(side="left")
@@ -207,6 +297,94 @@ class ReportApp:
 
         # self.status_label = tk.Label(self.root, text="", font=("Arial", 9), fg="#007700")
         # self.status_label.pack()
+
+    def on_db_filter_changed(self, key):
+        """A dropdown changed: reset and reload every dropdown after it."""
+        self.reload_db_filters(FILTER_ORDER.index(key) + 1)
+
+    def reload_db_filters(self, start=0):
+        """Reload FILTER_ORDER[start:], narrowed by the dropdowns before `start`."""
+        company = COMPANIES[self.db_company_var.get()]
+        filters = {k: self.db_vars[k].get() for k in FILTER_ORDER[:start]}
+        keys = FILTER_ORDER[start:]
+
+        for k in keys:
+            self.db_vars[k].set("All")
+            self.db_menus[k].configure(values=["All"], state="disabled")
+        if not keys:
+            return
+        self.gen_status.configure(text="Loading from database...", text_color="#555555")
+
+        def work():                                       # background thread: DB only, no UI
+            try:
+                data = {k: fetch_distinct(company, k, filters) for k in keys}
+            except Exception as e:
+                self.root.after(0, self.db_filters_failed, e)
+                return
+            self.root.after(0, self.db_filters_loaded, data)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def db_filters_loaded(self, data):
+        for k, values in data.items():
+            self.db_menus[k].configure(values=["All"] + values, state="normal")
+        self.gen_status.configure(text="")
+
+    def db_filters_failed(self, e):
+        self.gen_status.configure(text="")
+        messagebox.showerror("Database error", self.describe_error(e))
+
+    def get_db_selection(self):
+        sel = {"connection": COMPANIES[self.db_company_var.get()]}
+        sel.update({k: self.db_vars[k].get() for k in FILTER_ORDER})
+        return sel
+
+    def generate_template(self):
+        sel = self.get_db_selection()
+        company = self.db_company_var.get()
+        bulan = f"{self.db_month_var.get()} {self.db_year_var.get()}"
+
+        src = os.path.join(TEMPLATE_DIR, TEMPLATE_FILE)
+        if not os.path.isfile(src):
+            messagebox.showerror("Template not found", f"The template file is missing:\n{src}")
+            return
+
+        dest = filedialog.asksaveasfilename(
+            title="Save template as",
+            defaultextension=".xlsx",
+            initialfile=f"template_{bulan.replace(' ', '_')}.xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+        )
+        if not dest:
+            return
+
+        filters = {k: sel[k] for k in FILTER_ORDER}
+        self.gen_btn.configure(state="disabled")
+        self.gen_status.configure(text="Generating template...", text_color="#555555")
+
+        def work():                                       # background thread: no UI here
+            try:
+                records = fetch_employees(sel["connection"], filters)
+                build_template(src, dest, company, bulan, list(EMPLOYEE_FIELDS), records)
+            except Exception as e:
+                self.root.after(0, self.template_failed, e)
+                return
+            self.root.after(0, self.template_done, dest, len(records))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def template_failed(self, e):
+        self.gen_btn.configure(state="normal")
+        self.gen_status.configure(text="")
+        messagebox.showerror("Error", self.describe_error(e))
+
+    def template_done(self, dest, count):
+        self.gen_btn.configure(state="normal")
+        self.gen_status.configure(text="")
+        if count == 0:
+            messagebox.showwarning("No employees", "No employees matched the filters. The template was saved empty.")
+        if messagebox.askyesno("Template saved", f"Saved {count} employees to:\n{dest}\n\nOpen it now?"):
+            self.open_file(dest)
 
     def build_table(self, parent):
         style = ttk.Style()
@@ -552,6 +730,7 @@ class ReportApp:
 
     def on_close(self):
         cleanup_temp_previews()
+        dispose_all()
         self.root.destroy()
 
 if __name__ == "__main__":
