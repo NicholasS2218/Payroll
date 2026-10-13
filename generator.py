@@ -36,26 +36,30 @@ def read_table(file_path: str):
     header_idx = None
     for i in range(len(raw)):
         row = raw.iloc[i]
-        first = str(row.iloc[0]).strip().lower()
-        if first == "perusahaan":
-            meta["company"] = first_value(row.iloc[1:])
-        elif first == "bulan":
-            val = first_value(row.iloc[1:])
+        row_vals = [str(c).strip().lower() for c in row]
+        if "nama" in row_vals:
+            header_idx = i
+            break
+        elif "perusahaan" in row_vals:
+            meta["company"] = first_value(row.iloc[row_vals.index("perusahaan") + 1:])
+        elif "bulan" in row_vals:
+            val = first_value(row.iloc[row_vals.index("bulan") + 1:])
             try:
                 d = pd.to_datetime(val)
                 meta["bulan"] = f"{BULAN[d.month - 1]} {d.year}"
             except (ValueError, TypeError):
                 meta["bulan"] = val.upper()
-        elif first == "nama":
+        elif "nama" in row_vals:
             header_idx = i
             break
     if header_idx is None:
         raise ValueError("Could not find column 'Nama'")
 
     headers = ["" if pd.isna(h) else " ".join(str(h).split()) for h in raw.iloc[header_idx]]
+    name_idx = [h.lower() for h in headers].index("nama")
     body = raw.iloc[header_idx + 1:].reset_index(drop=True)
     body.columns = range(len(headers))  # positional, so duplicate headers are fine
-    body = body[body[0].notna() & (body[0].str.strip() != "")].reset_index(drop=True)
+    body = body[body[name_idx].notna() & (body[name_idx].str.strip() != "")].reset_index(drop=True)
 
     if not meta["bulan"]:
         now = datetime.now()
@@ -220,7 +224,8 @@ def normalize_record(row: pd.Series, headers: list, sections: dict, meta: dict) 
     info_items = [
         {"label": headers[i],
          "value": "" if pd.isna(row[i]) else str(row[i]).strip()}
-        for i in range(sections["earn"][0]) if headers[i]
+        for i in range(sections["earn"][0])
+        if headers[i] and headers[i].lower() not in ("no", "no.")
     ]
     half = (len(info_items) + 2) // 2
     info_left = info_items[:half]

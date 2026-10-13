@@ -61,6 +61,7 @@ class ReportApp:
         self.selected = set()
         self.jabatan_idx = None
         self.dept_idx = None
+        self.name_idx = 0
 
         self._insert_job = None
         self._search_job = None
@@ -346,8 +347,8 @@ class ReportApp:
         self.tree.heading("#0", text="☑" if self.all_visible_selected() else "☐")
 
     def setup_filters(self):
-        """Find the Jabatan / Department columns and fill the dropdowns with their values."""
         cols = [c.lower() for c in self.all_columns]
+        self.name_idx = cols.index("nama") if "nama" in cols else 0 
         self.jabatan_idx = cols.index("jabatan") if "jabatan" in cols else None
         self.dept_idx = cols.index("department") if "department" in cols else None
 
@@ -456,7 +457,7 @@ class ReportApp:
         dept = self.dept_var.get()
 
         def matches(row):
-            if query and query not in str(row[0]).lower():
+            if query and query not in str(row[self.name_idx]).lower():
                 return False
             if jab != "All" and self.jabatan_idx is not None and row[self.jabatan_idx] != jab:
                 return False
@@ -493,7 +494,7 @@ class ReportApp:
             # measure only the longest value per column instead of every cell
             longest = max((str(r[i]) for r in rows), key=len, default="")
             content_width = max(header_font.measure(col), font.measure(longest))
-            anchor = "w" if i == 0 else "center"
+            anchor = "w" if i == self.name_idx else "center"
             w = content_width + 24
             self.tree.column(col, anchor=anchor, width=w, minwidth=w, stretch=False)
 
