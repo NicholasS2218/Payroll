@@ -106,9 +106,10 @@ def fetch_employees(conn_name: str, filters: dict) -> list:
       where.append(f"[{FILTER_COLUMNS[k]}] = :{k}")
       params[k] = v
 
-  sql = f"SELECT {cols} FROM {EMPLOYEE_TABLE}"
+  sql = f"SELECT {cols} FROM {EMPLOYEE_TABLE} WHERE [Active] = 1"
   if where:
     sql += " WHERE " + " AND ".join(where)
+
   sql += (f" ORDER BY [{FILTER_COLUMNS['branch']}],"
             f" [{FILTER_COLUMNS['department']}],"
             f" [{EMPLOYEE_FIELDS['Nama']}]")
