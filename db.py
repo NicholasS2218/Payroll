@@ -6,13 +6,19 @@ from sqlalchemy import create_engine
 from sqlalchemy import text  
 from sqlalchemy.engine import URL
 
-def get_config_dir():
-  # next to the .exe when frozen, NOT inside sys._MEIPASS (that is a temp folder)
-  if getattr(sys, "frozen", False):
-      return os.path.dirname(sys.executable)
-  return os.path.dirname(os.path.abspath(__file__))
+def get_config_path():
+    name = "db_config.json"
+    if getattr(sys, "frozen", False):
+      candidates = [os.path.join(os.path.dirname(sys.executable), name),
+                    os.path.join(sys._MEIPASS, name)]
+    else:
+      candidates = [os.path.join(os.path.dirname(os.path.abspath(__file__)), name)]
+    for p in candidates:
+      if os.path.isfile(p):
+        return p
+    return candidates[0]
 
-CONFIG_PATH = os.path.join(get_config_dir(), "db_config.json")
+CONFIG_PATH = get_config_path() 
 _engines = {}
 
 def read_config():
@@ -57,7 +63,7 @@ def get_engine(name: str = "MAIN"):
       "TrustServerCertificate": "yes",   # needed for Driver 18 with self-signed certs
     },
   )
-  _engines[name] = create_engine(url, pool_pre_ping=True)
+  _engines[name] = create_engine(url, pool_pre_ping=True, connect_args={"timeout": 5})
   return _engines[name]
 
 EMPLOYEE_TABLE = "TB_Employee"
@@ -103,11 +109,31 @@ def fetch_employees(conn_name: str, filters: dict) -> list:
   sql = f"SELECT {cols} FROM {EMPLOYEE_TABLE}"
   if where:
     sql += " WHERE " + " AND ".join(where)
-  sql += f" ORDER BY [{EMPLOYEE_FIELDS['Nama']}]"
+  sql += (f" ORDER BY [{FILTER_COLUMNS['branch']}],"
+            f" [{FILTER_COLUMNS['department']}],"
+            f" [{EMPLOYEE_FIELDS['Nama']}]")
 
   with get_engine(conn_name).connect() as conn:
     rows = conn.execute(text(sql), params).fetchall()
   return [["" if v is None else str(v).strip() for v in r] for r in rows]
+
+def describe_db_error(e: Exception) -> str:
+  if isinstance(e, FileNotFoundError):
+    return str(e)
+  if isinstance(e, KeyError):
+    return f"Missing setting in db_config.json: {e}"
+
+  low = str(getattr(e, "orig", None) or e).lower()
+  if "login failed" in low:
+    return "Wrong username or password for this database."
+  if "data source name not found" in low or "can't open lib" in low:
+    return "The SQL Server ODBC driver was not found. Check 'odbc_driver' in db_config.json."
+  if "cannot open database" in low:
+    return "The database name is wrong, or this login has no access to it."
+  if any(s in low for s in ("timeout", "tcp provider", "network-related",
+          "could not open a connection", "08001")):
+    return "Cannot reach the server. Check the host and port, your network, or the VPN."
+  return "Could not connect to the database."
 
 def dispose_all():
   for e in _engines.values():

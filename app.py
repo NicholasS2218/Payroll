@@ -4,12 +4,22 @@ try:
 except ImportError:
     pyi_splash = None
 
+def close_splash():
+    global pyi_splash
+    if pyi_splash:
+        try:
+            pyi_splash.close()
+        except Exception:
+            pass
+        pyi_splash = None
+
 import os
 import sys
 import time
 
 from datetime import datetime
-from db import dispose_all, fetch_distinct, fetch_employees, EMPLOYEE_FIELDS, load_companies
+from db import dispose_all, fetch_distinct, fetch_employees, EMPLOYEE_FIELDS, load_companies, describe_db_error
+from sqlalchemy.exc import SQLAlchemyError 
 
 import threading
 import tkinter as tk
@@ -64,7 +74,7 @@ def cleanup_temp_previews(min_age_seconds=0):
 class ReportApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Payroll Report Generator v.1.0")
+        self.root.title("Payroll Report Generator v.1.1")
         self.root.geometry("760x560")
         self.root.after(0, lambda: self.root.state("zoomed"))
         self.root.minsize(640, 480)
@@ -87,6 +97,7 @@ class ReportApp:
         try:
             COMPANIES.update(load_companies())
         except Exception as e:
+            close_splash()
             messagebox.showerror("Configuration error", self.describe_error(e))
             sys.exit(1)
         self.build_ui()
@@ -179,6 +190,11 @@ class ReportApp:
         self.gen_status = ctk.CTkLabel(gen, text="", font=ctk.CTkFont(size=12), text_color="#555555")
         self.gen_status.grid(row=5, column=0, columnspan=5, sticky="w", padx=12, pady=(0, 6))
 
+        self.retry_btn = ctk.CTkButton(
+            gen, text="Retry", width=80, command=lambda: self.reload_db_filters(0),
+            fg_color="#777777", hover_color="#555555", text_color=TEXT_COLOR
+        )
+        
         self.root.after(100, self.reload_db_filters)     # fill the dropdowns on startup
 
         ctk.CTkLabel(header, text="STEP 2. Select the Excel file to preview and print",
@@ -308,6 +324,8 @@ class ReportApp:
         filters = {k: self.db_vars[k].get() for k in FILTER_ORDER[:start]}
         keys = FILTER_ORDER[start:]
 
+        self.retry_btn.grid_remove()
+
         for k in keys:
             self.db_vars[k].set("All")
             self.db_menus[k].configure(values=["All"], state="disabled")
@@ -329,10 +347,19 @@ class ReportApp:
         for k, values in data.items():
             self.db_menus[k].configure(values=["All"] + values, state="normal")
         self.gen_status.configure(text="")
+        self.gen_btn.configure(state="normal")
+        self.retry_btn.grid_remove()
 
     def db_filters_failed(self, e):
-        self.gen_status.configure(text="")
-        messagebox.showerror("Database error", self.describe_error(e))
+        msg = describe_db_error(e)
+        detail = str(getattr(e, "orig", None) or e)[:300]
+        self.gen_status.configure(text=f"⚠ Cannot connect to database: {msg}", text_color="#cc0000")
+        self.gen_btn.configure(state="disabled")
+        self.retry_btn.grid(row=5, column=4, padx=12, pady=(0, 6), sticky="e")
+        # messagebox.showwarning(
+        #     "Cannot connect to database",
+        #     f"{msg}\n\nCompany: {self.db_company_var.get()}\n\nTechnical details:\n{detail}",
+        # )
 
     def get_db_selection(self):
         sel = {"connection": COMPANIES[self.db_company_var.get()]}
@@ -352,7 +379,7 @@ class ReportApp:
         dest = filedialog.asksaveasfilename(
             title="Save template as",
             defaultextension=".xlsx",
-            initialfile=f"template_{bulan.replace(' ', '_')}.xlsx",
+            initialfile=f"template_{company.replace(' ', '_')}_{bulan.replace(' ', '_')}.xlsx",
             filetypes=[("Excel files", "*.xlsx")],
         )
         if not dest:
@@ -376,6 +403,9 @@ class ReportApp:
     def template_failed(self, e):
         self.gen_btn.configure(state="normal")
         self.gen_status.configure(text="")
+        if isinstance(e, SQLAlchemyError):
+            messagebox.showwarning("Cannot connect to database", describe_db_error(e))
+            return
         messagebox.showerror("Error", self.describe_error(e))
 
     def template_done(self, dest, count):
@@ -740,7 +770,8 @@ if __name__ == "__main__":
     root = ctk.CTk()
     app = ReportApp(root)
 
-    if pyi_splash:
-        pyi_splash.close()
+    # if pyi_splash:
+    #     pyi_splash.close()
+    close_splash()
         
     root.mainloop()
