@@ -41,6 +41,7 @@ def build_template(src, dest, company, bulan, headers, records):    # ADD
             if h.lower() in cols:
                 ws.cell(row=r, column=cols[h.lower()], value=v)
 
+    ws.column_dimensions["B"].width = 40 #for name
     wb.save(dest)
 
 def read_table(file_path: str):
@@ -69,9 +70,7 @@ def read_table(file_path: str):
                 meta["bulan"] = f"{BULAN[d.month - 1]} {d.year}"
             except (ValueError, TypeError):
                 meta["bulan"] = val.upper()
-        elif "nama" in row_vals:
-            header_idx = i
-            break
+                
     if header_idx is None:
         raise ValueError("Could not find column 'Nama'")
 
@@ -352,11 +351,4 @@ def generate_html(input_path: str, layout: str = DEFAULT_LAYOUT, only=None) -> s
     return html.replace("</body>", snippet + "</body>")
 
 if __name__ == "__main__":
-    import multiprocessing
-    multiprocessing.freeze_support()
-    sample = os.path.join(os.path.dirname(__file__), "sample_data.csv")
-    if os.path.exists(sample):
-        out = generate_pdf_parallel(sample, "test_report.pdf")
-        print(f"Generated: {out}")
-    else:
-        print("No sample_data.csv found for manual testing.")
+    pass

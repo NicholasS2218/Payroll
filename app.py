@@ -60,7 +60,7 @@ FILTER_LABELS = {
 }
 
 MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
-YEARS = [str(datetime.now().year - i) for i in range(3)]
+YEARS = [str(datetime.now().year + i) for i in range(2, -3, -1)]
 
 def cleanup_temp_previews(min_age_seconds=0):
     now = time.time()
@@ -70,6 +70,21 @@ def cleanup_temp_previews(min_age_seconds=0):
                 f.unlink()
         except OSError:
             pass
+
+def log_error(e):
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(sys.argv[0]))
+    text = f"\n[{datetime.now():%Y-%m-%d %H:%M:%S}]\n" + "".join(
+        traceback.format_exception(type(e), e, e.__traceback__))
+    for folder in (base, tempfile.gettempdir()):
+        try:
+            with open(os.path.join(folder, "error_log.txt"), "a", encoding="utf-8") as f:
+                f.write(text)
+            return
+        except OSError:
+            continue
 
 class ReportApp:
     def __init__(self, root):
@@ -88,9 +103,12 @@ class ReportApp:
         self.jabatan_idx = None
         self.dept_idx = None
         self.name_idx = 0
+        self.nik_idx = None
 
         self._insert_job = None
         self._search_job = None
+
+        self._filter_req = 0
 
         cleanup_temp_previews(min_age_seconds=60)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -117,29 +135,29 @@ class ReportApp:
 
         # header
         header = ctk.CTkFrame(container, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=24, pady=(24, 4))
+        header.grid(row=0, column=0, sticky="ew", padx=24, pady=(4, 4))
         # header.pack(fill="x", padx=24, pady=(24, 8))
         # pad = {"padx": 20, "pady": 10}
 
-        title = ctk.CTkLabel(header, text="Payroll Report Generator", font=ctk.CTkFont(size=32, weight="bold"))
+        title = ctk.CTkLabel(header, text="Payroll Report Generator", font=ctk.CTkFont(size=22, weight="bold"))
         title.pack()
         #title.pack(pady=(20, 5))
 
-        subtitle = ctk.CTkLabel(
-            header,
-            text="Select a CSV or Excel file",
-            font=ctk.CTkFont(size=16),
-            text_color="#666666",
-        )
-        subtitle.pack()
+        # subtitle = ctk.CTkLabel(
+        #     header,
+        #     text="Select a CSV or Excel file",
+        #     font=ctk.CTkFont(size=16),
+        #     text_color="#666666",
+        # )
+        # subtitle.pack()
 
         # --- generate template from database ---
         gen = ctk.CTkFrame(header)
         gen.pack(fill="x", pady=(12, 0))
 
-        ctk.CTkLabel(gen, text="STEP 1. Generate Template from Database",
+        ctk.CTkLabel(gen, text="STEP 1. Generate Template",
                      font=ctk.CTkFont(size=14, weight="bold"), text_color="#333333"
-                     ).grid(row=0, column=0, columnspan=5, sticky="w", padx=12, pady=(8, 2))
+                     ).grid(row=0, column=0, columnspan=5, sticky="w", padx=12, pady=(8, 0))
 
         menu_kw = dict(width=170, fg_color=BRAND_COLOR, button_color=BRAND_COLOR_HOVER,
                        button_hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR)
@@ -148,7 +166,7 @@ class ReportApp:
         now = datetime.now()
         self.db_company_var = tk.StringVar(value=list(COMPANIES)[0])
         self.db_month_var = tk.StringVar(value=MONTHS[now.month - 1])
-        self.db_year_var = tk.StringVar(value=YEARS[0])
+        self.db_year_var = tk.StringVar(value=str(now.year))
         self.db_vars, self.db_menus = {}, {}
 
         # row 1: Company (spans 2 columns), Month, Year
@@ -157,15 +175,17 @@ class ReportApp:
         ctk.CTkLabel(gen, text="Company", **label_kw).grid(row=1, column=0, columnspan=2, sticky="w", padx=12)
         ctk.CTkOptionMenu(gen, variable=self.db_company_var, values=list(COMPANIES),
             command=lambda _: self.reload_db_filters(0), **company_kw
-            ).grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
+            ).grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 0))
 
         ctk.CTkLabel(gen, text="Month", **label_kw).grid(row=1, column=2, sticky="w", padx=12)
-        ctk.CTkOptionMenu(gen, variable=self.db_month_var, values=MONTHS, **menu_kw
-            ).grid(row=2, column=2, sticky="w", padx=12, pady=(0, 10))
+        ctk.CTkOptionMenu(gen, variable=self.db_month_var, values=MONTHS,
+                          command=lambda _: self.reload_db_filters(0), **menu_kw
+            ).grid(row=2, column=2, sticky="w", padx=12, pady=(0, 0))
 
         ctk.CTkLabel(gen, text="Year", **label_kw).grid(row=1, column=3, sticky="w", padx=12)
-        ctk.CTkOptionMenu(gen, variable=self.db_year_var, values=YEARS, **menu_kw
-            ).grid(row=2, column=3, sticky="w", padx=12, pady=(0, 10))
+        ctk.CTkOptionMenu(gen, variable=self.db_year_var, values=YEARS,
+                          command=lambda _: self.reload_db_filters(0), **menu_kw
+            ).grid(row=2, column=3, sticky="w", padx=12, pady=(0, 0))
 
         # row 2: Branch, Department, Jabatan, Grup (labels on grid row 3, dropdowns on grid row 4)
         for n, key in enumerate(FILTER_ORDER):
@@ -177,18 +197,18 @@ class ReportApp:
                 command=lambda _, k=key: self.on_db_filter_changed(k),
                 **menu_kw)
             
-            menu.grid(row=4, column=n, sticky="w", padx=12, pady=(0, 10))
+            menu.grid(row=4, column=n, sticky="w", padx=12, pady=(0, 0))
             self.db_vars[key], self.db_menus[key] = var, menu
 
         self.gen_btn = ctk.CTkButton(
             gen, text="Generate Template", width=150, command=self.generate_template,
             fg_color=BRAND_COLOR, hover_color=BRAND_COLOR_HOVER, text_color=TEXT_COLOR
         )
-        self.gen_btn.grid(row=4, column=4, padx=12, pady=(0, 10), sticky="e")
+        self.gen_btn.grid(row=4, column=4, padx=12, pady=(0, 0), sticky="e")
         gen.grid_columnconfigure(4, weight=1)
 
         self.gen_status = ctk.CTkLabel(gen, text="", font=ctk.CTkFont(size=12), text_color="#555555")
-        self.gen_status.grid(row=5, column=0, columnspan=5, sticky="w", padx=12, pady=(0, 6))
+        self.gen_status.grid(row=5, column=0, columnspan=5, sticky="w", padx=12, pady=(4, 4))
 
         self.retry_btn = ctk.CTkButton(
             gen, text="Retry", width=80, command=lambda: self.reload_db_filters(0),
@@ -197,9 +217,9 @@ class ReportApp:
         
         self.root.after(100, self.reload_db_filters)     # fill the dropdowns on startup
 
-        ctk.CTkLabel(header, text="STEP 2. Select the Excel file to preview and print",
+        ctk.CTkLabel(header, text="STEP 2. Select Excel/CSV file",
             font=ctk.CTkFont(size=14, weight="bold"), text_color="#333333", anchor="w"
-            ).pack(fill="x", padx=0, pady=(20, 0))
+            ).pack(fill="x", padx=0, pady=(16, 0))
         
         file_row = ctk.CTkFrame(container, fg_color="transparent")
         file_row.grid(row=1, column=0, sticky="ew", padx=24, pady=(2, 4))
@@ -224,24 +244,20 @@ class ReportApp:
         search_row.grid(row=2, column=0, sticky="ew", padx=24, pady=(4, 0))
         # search_row.pack(fill="x", padx=24, pady=(4, 0))
 
-        self.meta_label = ctk.CTkLabel(
-            search_row, text="", font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#333333", anchor="w"
-        )
-        self.meta_label.pack(fill="x", pady=(0, 4))
+        # self.meta_label = ctk.CTkLabel(
+        #     search_row, text="", font=ctk.CTkFont(size=16, weight="bold"),
+        #     text_color="#333333", anchor="w"
+        # )
+        # self.meta_label.pack(fill="x", pady=(0, 4))
 
         search_subtitle = ctk.CTkLabel(
             search_row, text="Search Employee", font=ctk.CTkFont(size=14), text_color="#555555", anchor="w"
         )
-        search_subtitle.pack(fill="x", pady=(2, 0))
+        search_subtitle.pack(fill="x", pady=(0, 0))
 
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", self.on_search_typed)
-
-        self.search_entry = ctk.CTkEntry(
-            search_row, placeholder_text="Search by name...", textvariable=self.search_var,
-        )
+        self.search_entry = ctk.CTkEntry(search_row, placeholder_text="Search by name or NIK")
         self.search_entry.pack(fill="x")
+        self.search_entry.bind("<KeyRelease>", self.on_search_typed)
 
         filter_row = ctk.CTkFrame(search_row, fg_color="transparent")
         filter_row.pack(fill="x", pady=(8, 0))
@@ -269,7 +285,7 @@ class ReportApp:
         # preview table
         table_frame = ctk.CTkFrame(container, height= 420)
         table_frame.pack_propagate(False)
-        table_frame.grid(row=3, column=0, sticky="nsew", padx=24, pady=(12, 8))
+        table_frame.grid(row=3, column=0, sticky="nsew", padx=24, pady=(8, 0))
 
         self.build_table(table_frame)
         self.loading_frame = ctk.CTkFrame(table_frame, fg_color="#ffffff")
@@ -323,6 +339,8 @@ class ReportApp:
         company = COMPANIES[self.db_company_var.get()]
         filters = {k: self.db_vars[k].get() for k in FILTER_ORDER[:start]}
         keys = FILTER_ORDER[start:]
+        year = int(self.db_year_var.get())
+        month = MONTHS.index(self.db_month_var.get()) + 1
 
         self.retry_btn.grid_remove()
 
@@ -331,26 +349,36 @@ class ReportApp:
             self.db_menus[k].configure(values=["All"], state="disabled")
         if not keys:
             return
+        
         self.gen_status.configure(text="Loading from database...", text_color="#555555")
+        self._filter_req += 1
+        req = self._filter_req
 
-        def work():                                       # background thread: DB only, no UI
+        def work():
             try:
-                data = {k: fetch_distinct(company, k, filters) for k in keys}
+                data = {k: fetch_distinct(company, k, year, month, filters) for k in keys}
             except Exception as e:
-                self.root.after(0, self.db_filters_failed, e)
+                self.root.after(0, self.db_filters_failed, e, req)
                 return
-            self.root.after(0, self.db_filters_loaded, data)
+            self.root.after(0, self.db_filters_loaded, data, req)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def db_filters_loaded(self, data):
+    def db_filters_loaded(self, data, req):
+        if req != self._filter_req:
+            return
+        
         for k, values in data.items():
             self.db_menus[k].configure(values=["All"] + values, state="normal")
         self.gen_status.configure(text="")
         self.gen_btn.configure(state="normal")
         self.retry_btn.grid_remove()
 
-    def db_filters_failed(self, e):
+    def db_filters_failed(self, e, req):
+        if req != self._filter_req:
+            return
+        
+        log_error(e)
         msg = describe_db_error(e)
         detail = str(getattr(e, "orig", None) or e)[:300]
         self.gen_status.configure(text=f"⚠ Cannot connect to database: {msg}", text_color="#cc0000")
@@ -379,19 +407,22 @@ class ReportApp:
         dest = filedialog.asksaveasfilename(
             title="Save template as",
             defaultextension=".xlsx",
-            initialfile=f"template_{company.replace(' ', '_')}_{bulan.replace(' ', '_')}.xlsx",
+            initialfile=f"template_{company.replace(' ', '_')}_{bulan.replace(' ', '_')}_{datetime.now():%H%M%S}.xlsx",
             filetypes=[("Excel files", "*.xlsx")],
         )
         if not dest:
             return
 
         filters = {k: sel[k] for k in FILTER_ORDER}
+        year = int(self.db_year_var.get())
+        month = MONTHS.index(self.db_month_var.get()) + 1
+
         self.gen_btn.configure(state="disabled")
         self.gen_status.configure(text="Generating template...", text_color="#555555")
 
         def work():                                       # background thread: no UI here
             try:
-                records = fetch_employees(sel["connection"], filters)
+                records = fetch_employees(sel["connection"], filters, year, month)
                 build_template(src, dest, company, bulan, list(EMPLOYEE_FIELDS), records)
             except Exception as e:
                 self.root.after(0, self.template_failed, e)
@@ -401,6 +432,7 @@ class ReportApp:
         threading.Thread(target=work, daemon=True).start()
 
     def template_failed(self, e):
+        log_error(e)
         self.gen_btn.configure(state="normal")
         self.gen_status.configure(text="")
         if isinstance(e, SQLAlchemyError):
@@ -427,6 +459,9 @@ class ReportApp:
 
         self.tree = ttk.Treeview(tree_container, style="Preview.Treeview",
                                 show="tree headings", selectmode="extended")
+        
+        self.tree.tag_configure("even", background="white")
+        self.tree.tag_configure("odd", background="#eef0f3")
         self.tree.bind("<Button-1>", self.on_tree_click)
 
         vsb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)
@@ -476,6 +511,7 @@ class ReportApp:
         self.root.after(0, self.load_done, path, result)
 
     def load_failed(self, e):
+        log_error(e)
         self.hide_loading()
         self.refresh_generate_btn()
         messagebox.showerror("Error reading file", str(e))
@@ -559,6 +595,7 @@ class ReportApp:
         self.name_idx = cols.index("nama") if "nama" in cols else 0 
         self.jabatan_idx = cols.index("jabatan") if "jabatan" in cols else None
         self.dept_idx = cols.index("department") if "department" in cols else None
+        self.nik_idx = next((i for i, c in enumerate(cols) if "nik" in c.strip()), None)
 
         for idx, menu, var in (
             (self.jabatan_idx, self.jabatan_menu, self.jabatan_var),
@@ -601,7 +638,7 @@ class ReportApp:
         self.input_path = None
 
         self.file_label.configure(text="No file selected")
-        self.meta_label.configure(text="")
+        # self.meta_label.configure(text="")
         self.status_label.configure(text="")
         self.set_placeholder()
 
@@ -613,13 +650,13 @@ class ReportApp:
 
         left = " ".join(p for p in ["Payroll", meta.get("company")] if p)
         right = meta.get("bulan")
-        self.meta_label.configure(text="  |  ".join(p for p in [left, right] if p))
+        # self.meta_label.configure(text="  |  ".join(p for p in [left, right] if p))
 
         self.all_columns = columns
         self.all_rows = rows
 
         self.setup_filters()
-        self.search_var.set("")
+        self.search_entry.delete(0, "end")
         if self._search_job:                      # clearing the search must not trigger a second rebuild
             self.root.after_cancel(self._search_job)
             self._search_job = None
@@ -660,13 +697,16 @@ class ReportApp:
         if not self.all_rows:
             return
 
-        query = self.search_var.get().strip().lower()
+        query = self.search_entry.get().strip().lower()
         jab = self.jabatan_var.get()
         dept = self.dept_var.get()
 
         def matches(row):
-            if query and query not in str(row[self.name_idx]).lower():
-                return False
+            if query:
+                in_name = query in str(row[self.name_idx]).lower()
+                in_nik = self.nik_idx is not None and query in str(row[self.nik_idx]).lower()
+                if not (in_name or in_nik):
+                    return False
             if jab != "All" and self.jabatan_idx is not None and row[self.jabatan_idx] != jab:
                 return False
             if dept != "All" and self.dept_idx is not None and row[self.dept_idx] != dept:
@@ -709,9 +749,10 @@ class ReportApp:
         CHUNK = 300
 
         def step(start=0):
-            for idx, row in items[start:start + CHUNK]:
+            for pos, (idx, row) in enumerate(items[start:start + CHUNK], start=start):
                 mark = "☑" if idx in self.selected else "☐"
-                self.tree.insert("", "end", iid=str(idx), text=mark, values=row)
+                tag = "odd" if pos % 2 else "even"
+                self.tree.insert("", "end", iid=str(idx), text=mark, values=row, tags=(tag,))
             nxt = start + CHUNK
             if nxt < len(items):
                 self.loading_label.configure(text=f"Loading rows... {nxt}/{len(items)}")
@@ -755,7 +796,7 @@ class ReportApp:
                 f.write(html)
             webbrowser.open(Path(path).as_uri())
         except Exception as e:
-            traceback.print_exc()
+            log_error(e)
             messagebox.showerror("Error", self.describe_error(e))
 
     def on_close(self):
@@ -768,6 +809,10 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
 
     root = ctk.CTk()
+    root.report_callback_exception = lambda exc, val, tb: log_error(val)
+    sys.excepthook = lambda exc, val, tb: log_error(val)
+    threading.excepthook = lambda args: log_error(args.exc_value)
+
     app = ReportApp(root)
 
     # if pyi_splash:
