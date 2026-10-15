@@ -112,8 +112,8 @@ def fetch_distinct(conn_name: str, key: str, year: int, month: int, filters: dic
   params["next_start"] = next_start
   sql = (f"SELECT DISTINCT [{col}] FROM {EMPLOYEE_TABLE} "
          f"WHERE [{col}] IS NOT NULL "
-         f"AND [TglMasuk] < :next_start "
-         f"AND ([TglBerhenti] IS NULL OR [TglBerhenti] >= :period_start)")
+         f"AND [TglMasuk] IS NOT NULL AND [TglMasuk] < :next_start "
+         f"AND (([TglBerhenti] IS NULL AND [Active] = 1) OR [TglBerhenti] >= :period_start)")
   
   if where:
       sql += " AND " + " AND ".join(where)
@@ -145,8 +145,8 @@ def fetch_employees(conn_name: str, filters: dict, year: int, month: int) -> lis
   params["next_start"] = next_start
 
   sql = (f"SELECT {cols} FROM {EMPLOYEE_TABLE} "
-         f"WHERE [TglMasuk] < :next_start "
-         f"AND ([TglBerhenti] IS NULL OR [TglBerhenti] >= :period_start)")
+         f"WHERE [TglMasuk] IS NOT NULL AND [TglMasuk] < :next_start "
+         f"AND (([TglBerhenti] IS NULL AND [Active] = 1) OR [TglBerhenti] >= :period_start)")
   
   if where:
     sql += " AND " + " AND ".join(where)
