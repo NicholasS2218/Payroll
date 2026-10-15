@@ -1,9 +1,10 @@
 import re
 import os
-import math
 import sys
 import pandas as pd
-import tempfile 
+import csv
+import io
+
 from openpyxl import load_workbook
 from jinja2 import Environment, FileSystemLoader
 from datetime import datetime
@@ -44,10 +45,28 @@ def build_template(src, dest, company, bulan, headers, records):    # ADD
     ws.column_dimensions["B"].width = 40 #for name
     wb.save(dest)
 
+def read_csv_rows(file_path: str) -> pd.DataFrame:
+    for enc in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            with open(file_path, encoding=enc, newline="") as f:
+                text = f.read()
+            break
+        except UnicodeDecodeError:
+            continue
+
+    lines = text.splitlines()
+    sample = next((l for l in lines if "nama" in l.lower()), lines[0] if lines else "")
+    delim = max(",;\t", key=sample.count)          # picks , ; or tab from the header line
+
+    rows = list(csv.reader(io.StringIO(text), delimiter=delim))
+    width = max((len(r) for r in rows), default=0)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    return pd.DataFrame(rows, dtype=str).replace("", float("nan"))
+
 def read_table(file_path: str):
     ext = os.path.splitext(file_path)[1].lower()
     if ext in (".csv", ".txt"):
-        raw = pd.read_csv(file_path, sep=None, engine="python", encoding="utf-8-sig", header=None, dtype=str)
+        raw = read_csv_rows(file_path)
     elif ext in (".xlsx", ".xls"):
         raw = pd.read_excel(file_path, header=None, dtype=str)
     else:

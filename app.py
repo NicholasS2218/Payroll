@@ -615,7 +615,7 @@ class ReportApp:
     def select_file(self):
         path = filedialog.askopenfilename(
             title="Select CSV or Excel file",
-            filetypes=[("Spreadsheet files", "*.csv *.xlsx *.xls"), ("All files", "*.*")],
+            filetypes=[("Spreadsheet files", "*.txt *.csv *.xlsx *.xls"), ("All files", "*.*")],
         )
         if not path:
             return
