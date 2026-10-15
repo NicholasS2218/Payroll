@@ -89,7 +89,7 @@ def log_error(e):
 class ReportApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Payroll Report Generator v.1.1")
+        self.root.title("Payroll Report Generator v.1.1.2")
         self.root.geometry("760x560")
         self.root.after(0, lambda: self.root.state("zoomed"))
         self.root.minsize(640, 480)
